@@ -1,16 +1,17 @@
 import nonebot
-from fastapi import APIRouter, Request
-from nonebot.drivers import Driver
 from tortoise import Tortoise
+from nonebot.drivers import Driver
+from fastapi import Request, APIRouter
+from fastapi.responses import JSONResponse
 from tortoise.exceptions import OperationalError
 
-from zhenxun.models.plugin_info import PluginInfo
 from zhenxun.models.task_info import TaskInfo
+from zhenxun.models.plugin_info import PluginInfo
 
-from ....base_model import BaseResultModel, QueryModel, Result
-from ....utils import authentication
-from .models.model import SqlModel, SqlText
 from .models.sql_log import SqlLog
+from ....utils import authentication
+from .models.model import SqlText, SqlModel
+from ....base_model import Result, QueryModel, BaseResultModel
 
 router = APIRouter(prefix="/database")
 
@@ -24,7 +25,8 @@ SQL_DICT = {}
 SELECT_TABLE_SQL = """
 select a.tablename as name,d.description as desc from pg_tables a
     left join pg_class c on relname=tablename
-    left join pg_description d on oid=objoid and objsubid=0 where a.schemaname = 'public'
+    left join pg_description d on oid=objoid
+    and objsubid=0 where a.schemaname = 'public'
 """
 
 SELECT_TABLE_COLUMN_SQL = """
@@ -57,33 +59,44 @@ async def _():
         module2name = {r[0]: r[1] for r in result}
         for s in SQL_DICT:
             module = SQL_DICT[s].module
-            if module in module2name:
-                SQL_DICT[s].name = module2name[module]
-            else:
-                SQL_DICT[s].name = module
+            SQL_DICT[s].name = module2name.get(module, module)
 
 
 @router.get(
-    "/get_table_list", dependencies=[authentication()], description="获取数据库表"
+    "/get_table_list",
+    dependencies=[authentication()],
+    response_model=Result[list[dict]],
+    response_class=JSONResponse,
+    description="获取数据库表",
 )
-async def _() -> Result:
+async def _() -> Result[list[dict]]:
     db = Tortoise.get_connection("default")
     query = await db.execute_query_dict(SELECT_TABLE_SQL)
     return Result.ok(query)
 
 
 @router.get(
-    "/get_table_column", dependencies=[authentication()], description="获取表字段"
+    "/get_table_column",
+    dependencies=[authentication()],
+    response_model=Result[list[dict]],
+    response_class=JSONResponse,
+    description="获取表字段",
 )
-async def _(table_name: str) -> Result:
+async def _(table_name: str) -> Result[list[dict]]:
     db = Tortoise.get_connection("default")
-    print(SELECT_TABLE_COLUMN_SQL.format(table_name))
+    # print(SELECT_TABLE_COLUMN_SQL.format(table_name))
     query = await db.execute_query_dict(SELECT_TABLE_COLUMN_SQL.format(table_name))
     return Result.ok(query)
 
 
-@router.post("/exec_sql", dependencies=[authentication()], description="执行sql")
-async def _(sql: SqlText, request: Request) -> Result:
+@router.post(
+    "/exec_sql",
+    dependencies=[authentication()],
+    response_model=Result[list[dict]],
+    response_class=JSONResponse,
+    description="执行sql",
+)
+async def _(sql: SqlText, request: Request) -> Result[list[dict]]:
     ip = request.client.host if request.client else "unknown"
     try:
         if sql.sql.lower().startswith("select"):
@@ -92,7 +105,7 @@ async def _(sql: SqlText, request: Request) -> Result:
             await SqlLog.add(ip or "0.0.0.0", sql.sql, "")
             return Result.ok(res, "执行成功啦!")
         else:
-            result = await TestSQL.raw(sql.sql)
+            result = await TaskInfo.raw(sql.sql)
             await SqlLog.add(ip or "0.0.0.0", sql.sql, str(result))
             return Result.ok(info="执行成功啦!")
     except OperationalError as e:
@@ -100,8 +113,14 @@ async def _(sql: SqlText, request: Request) -> Result:
         return Result.warning_(f"sql执行错误: {e}")
 
 
-@router.post("/get_sql_log", dependencies=[authentication()], description="sql日志列表")
-async def _(query: QueryModel) -> Result:
+@router.post(
+    "/get_sql_log",
+    dependencies=[authentication()],
+    response_model=Result[BaseResultModel],
+    response_class=JSONResponse,
+    description="sql日志列表",
+)
+async def _(query: QueryModel) -> Result[BaseResultModel]:
     total = await SqlLog.all().count()
     if total % query.size:
         total += 1
@@ -114,8 +133,14 @@ async def _(query: QueryModel) -> Result:
     return Result.ok(BaseResultModel(total=total, data=data))
 
 
-@router.get("/get_common_sql", dependencies=[authentication()], description="常用sql")
-async def _(plugin_name: str | None = None) -> Result:
+@router.get(
+    "/get_common_sql",
+    dependencies=[authentication()],
+    response_model=Result[dict],
+    response_class=JSONResponse,
+    description="常用sql",
+)
+async def _(plugin_name: str | None = None) -> Result[dict]:
     if plugin_name:
         return Result.ok(SQL_DICT.get(plugin_name))
     return Result.ok(str(SQL_DICT))
