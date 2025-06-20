@@ -9,3 +9,5 @@ DEFAULT_GITHUB_URL = "https://github.com/zhenxun-org/zhenxun_bot_plugins/tree/ma
 
 EXTRA_GITHUB_URL = "https://github.com/zhenxun-org/zhenxun_bot_plugins_index/tree/index"
 """插件库索引github仓库地址"""
+
+LOG_COMMAND = "插件商店"
