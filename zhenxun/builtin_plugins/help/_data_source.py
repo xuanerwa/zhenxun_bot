@@ -1,13 +1,19 @@
 from pathlib import Path
 
 import nonebot
+from nonebot.plugin import PluginMetadata
+from nonebot_plugin_htmlrender import template_to_pic
 from nonebot_plugin_uninfo import Uninfo
 
-from zhenxun.configs.path_config import IMAGE_PATH
+from zhenxun.configs.config import Config
+from zhenxun.configs.path_config import IMAGE_PATH, TEMPLATE_PATH
+from zhenxun.configs.utils import PluginExtraData
 from zhenxun.models.level_user import LevelUser
 from zhenxun.models.plugin_info import PluginInfo
+from zhenxun.models.statistics import Statistics
+from zhenxun.utils._image_template import ImageTemplate
 from zhenxun.utils.enum import PluginType
-from zhenxun.utils.image_utils import BuildImage, ImageTemplate
+from zhenxun.utils.image_utils import BuildImage
 
 from ._config import (
     GROUP_HELP_PATH,
@@ -80,9 +86,96 @@ async def get_user_allow_help(user_id: str) -> list[PluginType]:
     return type_list
 
 
-async def get_plugin_help(
-    user_id: str, name: str, is_superuser: bool
-) -> str | BuildImage:
+async def get_normal_help(
+    metadata: PluginMetadata, extra: PluginExtraData, is_superuser: bool
+) -> str | bytes:
+    """构建默认帮助详情
+
+    参数:
+        metadata: PluginMetadata
+        extra: PluginExtraData
+        is_superuser: 是否超级用户帮助
+
+    返回:
+        str | bytes: 返回信息
+    """
+    items = None
+    if is_superuser:
+        if usage := extra.superuser_help:
+            items = {
+                "简介": metadata.description,
+                "用法": usage,
+            }
+    else:
+        items = {
+            "简介": metadata.description,
+            "用法": metadata.usage,
+        }
+    if items:
+        return (await ImageTemplate.hl_page(metadata.name, items)).pic2bytes()
+    return "该功能没有帮助信息"
+
+
+def min_leading_spaces(str_list: list[str]) -> int:
+    min_spaces = 9999
+
+    for s in str_list:
+        leading_spaces = len(s) - len(s.lstrip(" "))
+
+        if leading_spaces < min_spaces:
+            min_spaces = leading_spaces
+
+    return min_spaces if min_spaces != 9999 else 0
+
+
+def split_text(text: str):
+    split_text = text.split("\n")
+    min_spaces = min_leading_spaces(split_text)
+    if min_spaces > 0:
+        split_text = [s[min_spaces:] for s in split_text]
+    return [s.replace(" ", "&nbsp;") for s in split_text]
+
+
+async def get_zhenxun_help(
+    module: str, metadata: PluginMetadata, extra: PluginExtraData, is_superuser: bool
+) -> str | bytes:
+    """构建ZhenXun帮助详情
+
+    参数:
+        module: 模块名
+        metadata: PluginMetadata
+        extra: PluginExtraData
+        is_superuser: 是否超级用户帮助
+
+    返回:
+        str | bytes: 返回信息
+    """
+    call_count = await Statistics.filter(plugin_name=module).count()
+    usage = metadata.usage
+    if is_superuser:
+        if not extra.superuser_help:
+            return "该功能没有超级用户帮助信息"
+        usage = extra.superuser_help
+    return await template_to_pic(
+        template_path=str((TEMPLATE_PATH / "help_detail").absolute()),
+        template_name="main.html",
+        templates={
+            "title": metadata.name,
+            "author": extra.author,
+            "version": extra.version,
+            "call_count": call_count,
+            "descriptions": split_text(metadata.description),
+            "usages": split_text(usage),
+        },
+        pages={
+            "viewport": {"width": 824, "height": 590},
+            "base_url": f"file://{TEMPLATE_PATH}",
+        },
+        wait=2,
+    )
+
+
+async def get_plugin_help(user_id: str, name: str, is_superuser: bool) -> str | bytes:
     """获取功能的帮助信息
 
     参数:
@@ -100,20 +193,12 @@ async def get_plugin_help(
     if plugin:
         _plugin = nonebot.get_plugin_by_module_name(plugin.module_path)
         if _plugin and _plugin.metadata:
-            items = None
-            if is_superuser:
-                extra = _plugin.metadata.extra
-                if usage := extra.get("superuser_help"):
-                    items = {
-                        "简介": _plugin.metadata.description,
-                        "用法": usage,
-                    }
+            extra_data = PluginExtraData(**_plugin.metadata.extra)
+            if Config.get_config("help", "detail_type") == "zhenxun":
+                return await get_zhenxun_help(
+                    plugin.module, _plugin.metadata, extra_data, is_superuser
+                )
             else:
-                items = {
-                    "简介": _plugin.metadata.description,
-                    "用法": _plugin.metadata.usage,
-                }
-            if items:
-                return await ImageTemplate.hl_page(plugin.name, items)
+                return await get_normal_help(_plugin.metadata, extra_data, is_superuser)
         return "糟糕! 该功能没有帮助喔..."
     return "没有查找到这个功能噢..."

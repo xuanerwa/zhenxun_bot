@@ -40,7 +40,13 @@ __plugin_meta__ = PluginMetadata(
                 value="zhenxun",
                 help="帮助图片样式 [normal, HTML, zhenxun]",
                 default_value="zhenxun",
-            )
+            ),
+            RegisterConfig(
+                key="detail_type",
+                value="zhenxun",
+                help="帮助详情图片样式 ['normal', 'zhenxun']",
+                default_value="zhenxun",
+            ),
         ],
     ).to_dict(),
 )

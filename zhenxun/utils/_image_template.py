@@ -3,8 +3,11 @@ from io import BytesIO
 from pathlib import Path
 import random
 
+from nonebot_plugin_htmlrender import md_to_pic, template_to_pic
 from PIL.ImageFont import FreeTypeFont
 from pydantic import BaseModel
+
+from zhenxun.configs.path_config import TEMPLATE_PATH
 
 from ._build_image import BuildImage
 
@@ -283,3 +286,191 @@ class ImageTemplate:
             width = max(width, w)
             height += h
         return width, height
+
+
+class MarkdownTable:
+    def __init__(self, headers: list[str], rows: list[list[str]]):
+        self.headers = headers
+        self.rows = rows
+
+    def to_markdown(self) -> str:
+        """将表格转换为Markdown格式"""
+        header_row = "| " + " | ".join(self.headers) + " |"
+        separator_row = "| " + " | ".join(["---"] * len(self.headers)) + " |"
+        data_rows = "\n".join(
+            "| " + " | ".join(map(str, row)) + " |" for row in self.rows
+        )
+        return f"{header_row}\n{separator_row}\n{data_rows}"
+
+
+class Markdown:
+    def __init__(self, data: list[str] | None = None):
+        if data is None:
+            data = []
+        self._data = data
+
+    def text(self, text: str) -> "Markdown":
+        """添加Markdown文本"""
+        self._data.append(text)
+        return self
+
+    def head(self, text: str, level: int = 1) -> "Markdown":
+        """添加Markdown标题"""
+        if level < 1 or level > 6:
+            raise ValueError("标题级别必须在1到6之间")
+        self._data.append(f"{'#' * level} {text}")
+        return self
+
+    def image(self, content: str | Path, add_empty_line: bool = True) -> "Markdown":
+        """添加Markdown图片
+
+        参数:
+            content: 图片内容，可以是url地址，图片路径或base64字符串.
+            add_empty_line: 默认添加换行.
+
+        返回:
+            Markdown: Markdown
+        """
+        if isinstance(content, Path):
+            content = str(content.absolute())
+        if content.startswith("base64"):
+            content = f"data:image/png;base64,{content.split('base64://', 1)[-1]}"
+        self._data.append(f"![image]({content})")
+        if add_empty_line:
+            self._add_empty_line()
+        return self
+
+    def quote(self, text: str | list[str]) -> "Markdown":
+        """添加Markdown引用文本
+
+        参数:
+            text: 引用文本内容，可以是字符串或字符串列表.
+        如果是列表，则每个元素都会被单独引用。
+
+        返回:
+            Markdown: Markdown
+        """
+        if isinstance(text, str):
+            self._data.append(f"> {text}")
+        elif isinstance(text, list):
+            for t in text:
+                self._data.append(f"> {t}")
+        self._add_empty_line()
+        return self
+
+    def code(self, code: str, language: str = "python") -> "Markdown":
+        """添加Markdown代码块"""
+        self._data.append(f"```{language}\n{code}\n```")
+        return self
+
+    def table(self, headers: list[str], rows: list[list[str]]) -> "Markdown":
+        """添加Markdown表格"""
+        table = MarkdownTable(headers, rows)
+        self._data.append(table.to_markdown())
+        return self
+
+    def list(self, items: list[str | list[str]]) -> "Markdown":
+        """添加Markdown列表"""
+        self._add_empty_line()
+        _text = "\n".join(
+            f"- {item}"
+            if isinstance(item, str)
+            else "\n".join(f"- {sub_item}" for sub_item in item)
+            for item in items
+        )
+        self._data.append(_text)
+        return self
+
+    def _add_empty_line(self):
+        """添加空行"""
+        self._data.append("")
+
+    async def build(self, width: int = 800, css_path: Path | None = None) -> bytes:
+        """构建Markdown文本"""
+        if css_path is not None:
+            return await md_to_pic(
+                md="\n".join(self._data), width=width, css_path=str(css_path.absolute())
+            )
+        return await md_to_pic(md="\n".join(self._data), width=width)
+
+
+class Notebook:
+    def __init__(self, data: list[dict] | None = None):
+        self._data = data if data is not None else []
+
+    def text(self, text: str) -> "Notebook":
+        """添加Notebook文本"""
+        self._data.append({"type": "paragraph", "text": text})
+        return self
+
+    def head(self, text: str, level: int = 1) -> "Notebook":
+        """添加Notebook标题"""
+        if not 1 <= level <= 4:
+            raise ValueError("标题级别必须在1-4之间")
+        self._data.append({"type": "heading", "text": text, "level": level})
+        return self
+
+    def image(
+        self,
+        content: str | Path,
+        caption: str | None = None,
+    ) -> "Notebook":
+        """添加Notebook图片
+
+        参数:
+            content: 图片内容，可以是url地址，图片路径或base64字符串.
+            caption: 图片说明.
+
+        返回:
+            Notebook: Notebook
+        """
+        if isinstance(content, Path):
+            content = str(content.absolute())
+        if content.startswith("base64"):
+            content = f"data:image/png;base64,{content.split('base64://', 1)[-1]}"
+        self._data.append({"type": "image", "src": content, "caption": caption})
+        return self
+
+    def quote(self, text: str | list[str]) -> "Notebook":
+        """添加Notebook引用文本
+
+        参数:
+            text: 引用文本内容，可以是字符串或字符串列表.
+        如果是列表，则每个元素都会被单独引用。
+
+        返回:
+            Notebook: Notebook
+        """
+        if isinstance(text, str):
+            self._data.append({"type": "blockquote", "text": text})
+        elif isinstance(text, list):
+            for t in text:
+                self._data.append({"type": "blockquote", "text": text})
+        return self
+
+    def code(self, code: str, language: str = "python") -> "Notebook":
+        """添加Notebook代码块"""
+        self._data.append({"type": "code", "code": code, "language": language})
+        return self
+
+    def list(self, items: list[str], ordered: bool = False) -> "Notebook":
+        """添加Notebook列表"""
+        self._data.append({"type": "list", "data": items, "ordered": ordered})
+        return self
+
+    def add_divider(self) -> None:
+        """添加分隔线"""
+        self._data.append({"type": "divider"})
+
+    async def build(self) -> bytes:
+        """构建Notebook"""
+        return await template_to_pic(
+            template_path=str((TEMPLATE_PATH / "notebook").absolute()),
+            template_name="main.html",
+            templates={"elements": self._data},
+            pages={
+                "viewport": {"width": 700, "height": 1000},
+                "base_url": f"file://{TEMPLATE_PATH}",
+            },
+            wait=2,
+        )
