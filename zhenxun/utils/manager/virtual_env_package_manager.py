@@ -3,11 +3,19 @@ import subprocess
 from subprocess import CalledProcessError
 from typing import ClassVar
 
+from zhenxun.configs.config import Config
 from zhenxun.services.log import logger
 
 BAT_FILE = Path() / "win启动.bat"
 
 LOG_COMMAND = "VirtualEnvPackageManager"
+
+Config.add_plugin_config(
+    "virtualenv",
+    "python_path",
+    None,
+    help="虚拟环境python路径，为空时使用系统环境的poetry",
+)
 
 
 class VirtualEnvPackageManager:
@@ -21,6 +29,8 @@ class VirtualEnvPackageManager:
 
     @classmethod
     def __get_command(cls) -> list[str]:
+        if path := Config.get_config("virtualenv", "python_path"):
+            return [path, "-m", "pip"]
         return cls.WIN_COMMAND if BAT_FILE.exists() else cls.DEFAULT_COMMAND
 
     @classmethod

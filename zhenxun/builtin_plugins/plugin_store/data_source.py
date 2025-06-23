@@ -23,12 +23,6 @@ from .config import (
     LOG_COMMAND,
 )
 
-BAT_FILE = Path() / "win启动.bat"
-
-WIN_COMMAND = ["./Python310/python.exe", "-m", "pip", "install", "-r"]
-
-DEFAULT_COMMAND = ["poetry", "run", "pip", "install", "-r"]
-
 
 def row_style(column: str, text: str) -> RowStyle:
     """被动技能文本风格
@@ -438,8 +432,8 @@ class StoreManager:
                     continue
                 if cls.check_version_is_new(plugin_info, suc_plugin):
                     logger.debug(
-                        f"插件 {plugin_info.name}({plugin_info.module}) 已是最新版本"
-                        "，跳过",
+                        f"插件 {plugin_info.name}({plugin_info.module}) "
+                        "已是最新版本，跳过",
                         LOG_COMMAND,
                     )
                     continue
@@ -486,6 +480,18 @@ class StoreManager:
 
     @classmethod
     async def _resolve_plugin_key(cls, plugin_id: str) -> str:
+        """获取插件module
+
+        参数:
+            plugin_id: module，id或插件名称
+
+        异常:
+            ValueError: 插件不存在
+            ValueError: 插件不存在
+
+        返回:
+            str: 插件模块名
+        """
         plugin_list: list[StorePluginInfo] = await cls.get_data()
         if is_number(plugin_id):
             idx = int(plugin_id)
@@ -493,6 +499,9 @@ class StoreManager:
                 raise ValueError("插件ID不存在...")
             return plugin_list[idx].module
         elif isinstance(plugin_id, str):
-            if plugin_id not in [v.module for v in plugin_list]:
-                raise ValueError("插件Module不存在...")
-            return plugin_id
+            result = (
+                None if plugin_id not in [v.module for v in plugin_list] else plugin_id
+            ) or next(v for v in plugin_list if v.name == plugin_id).module
+            if not result:
+                raise ValueError("插件 Module / 名称 不存在...")
+            return result
