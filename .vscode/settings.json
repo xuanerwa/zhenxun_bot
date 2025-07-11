@@ -29,6 +29,7 @@
     "unban",
     "Uninfo",
     "userinfo",
+    "webui",
     "zhenxun"
   ],
   "python.analysis.autoImportCompletions": true,

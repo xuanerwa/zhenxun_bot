@@ -34,3 +34,5 @@ REPLACE_FOLDERS = [
     "models",
     "configs",
 ]
+
+COMMAND = "检查更新"

@@ -11,7 +11,7 @@ from nonebot_plugin_alconna import (
     on_alconna,
     store_true,
 )
-from nonebot_plugin_session import EventSession
+from nonebot_plugin_uninfo import Uninfo
 
 from zhenxun.configs.utils import PluginExtraData
 from zhenxun.services.log import logger
@@ -22,7 +22,7 @@ from zhenxun.utils.manager.resource_manager import (
 )
 from zhenxun.utils.message import MessageUtils
 
-from ._data_source import UpdateManage
+from ._data_source import UpdateManager
 
 __plugin_meta__ = PluginMetadata(
     name="自动更新",
@@ -32,16 +32,18 @@ __plugin_meta__ = PluginMetadata(
         检查更新真寻最新版本，包括了自动更新
         资源文件大小一般在130mb左右，除非必须更新一般仅更新代码文件
         指令：
-            检查更新 [main|release|resource] ?[-r]
+            检查更新 [main|release|resource|webui] ?[-r]
                 main: main分支
                 release: 最新release
                 resource: 资源文件
+                webui: webui文件
                 -r: 下载资源文件，一般在更新main或release时使用
             示例:
             检查更新 main
             检查更新 main -r
             检查更新 release -r
             检查更新 resource
+            检查更新 webui
     """.strip(),
     extra=PluginExtraData(
         author="HibiKier",
@@ -53,7 +55,7 @@ __plugin_meta__ = PluginMetadata(
 _matcher = on_alconna(
     Alconna(
         "检查更新",
-        Args["ver_type?", ["main", "release", "resource"]],
+        Args["ver_type?", ["main", "release", "resource", "webui"]],
         Option("-r|--resource", action=store_true, help_text="下载资源文件"),
     ),
     priority=1,
@@ -66,23 +68,24 @@ _matcher = on_alconna(
 @_matcher.handle()
 async def _(
     bot: Bot,
-    session: EventSession,
+    session: Uninfo,
     ver_type: Match[str],
     resource: Query[bool] = Query("resource", False),
 ):
-    if not session.id1:
-        await MessageUtils.build_message("用户id为空...").finish()
     result = ""
+    await MessageUtils.build_message("正在进行检查更新...").send(reply_to=True)
     if ver_type.result in {"main", "release"}:
         if not ver_type.available:
-            result = await UpdateManage.check_version()
+            result = await UpdateManager.check_version()
             logger.info("查看当前版本...", "检查更新", session=session)
             await MessageUtils.build_message(result).finish()
         try:
-            result = await UpdateManage.update(bot, session.id1, ver_type.result)
+            result = await UpdateManager.update(bot, session.user.id, ver_type.result)
         except Exception as e:
             logger.error("版本更新失败...", "检查更新", session=session, e=e)
             await MessageUtils.build_message(f"更新版本失败...e: {e}").finish()
+    elif ver_type.result == "webui":
+        result = await UpdateManager.update_webui()
     if resource.result or ver_type.result == "resource":
         try:
             await ResourceManager.init_resources(True)

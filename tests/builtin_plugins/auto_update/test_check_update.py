@@ -13,7 +13,11 @@ from pytest_mock import MockerFixture
 from respx import MockRouter
 
 from tests.config import BotId, GroupId, MessageId, UserId
-from tests.utils import _v11_group_message_event, _v11_private_message_send
+from tests.utils import (
+    _v11_group_message_event,
+    _v11_private_message_send,
+    get_reply_cq,
+)
 from tests.utils import get_response_json as _get_response_json
 
 
@@ -311,6 +315,12 @@ async def test_check_update_release(
             to_me=True,
         )
         ctx.receive_event(bot, event)
+        ctx.should_call_send(
+            event=event,
+            message=Message(f"{get_reply_cq(MessageId.MESSAGE_ID)}正在进行检查更新..."),
+            result=None,
+            bot=bot,
+        )
         ctx.should_call_api(
             "send_msg",
             _v11_private_message_send(
@@ -401,6 +411,12 @@ async def test_check_update_main(
             to_me=True,
         )
         ctx.receive_event(bot, event)
+        ctx.should_call_send(
+            event=event,
+            message=Message(f"{get_reply_cq(MessageId.MESSAGE_ID)}正在进行检查更新..."),
+            result=None,
+            bot=bot,
+        )
         ctx.should_call_api(
             "send_msg",
             _v11_private_message_send(

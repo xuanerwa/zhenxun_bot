@@ -7,6 +7,7 @@ import zipfile
 from nonebot.adapters import Bot
 from nonebot.utils import run_sync
 
+from zhenxun.configs.path_config import DATA_PATH
 from zhenxun.services.log import logger
 from zhenxun.utils.github_utils import GithubUtils
 from zhenxun.utils.github_utils.models import RepoInfo
@@ -17,6 +18,7 @@ from .config import (
     BACKUP_PATH,
     BASE_PATH,
     BASE_PATH_STRING,
+    COMMAND,
     DEFAULT_GITHUB_URL,
     DOWNLOAD_GZ_FILE,
     DOWNLOAD_ZIP_FILE,
@@ -38,7 +40,7 @@ def install_requirement():
 
     if not requirement_path.exists():
         logger.debug(
-            f"没有找到zhenxun的requirement.txt,目标路径为{requirement_path}", "插件管理"
+            f"没有找到zhenxun的requirement.txt,目标路径为{requirement_path}", COMMAND
         )
         return
     try:
@@ -48,9 +50,9 @@ def install_requirement():
             capture_output=True,
             text=True,
         )
-        logger.debug(f"成功安装真寻依赖，日志:\n{result.stdout}", "插件管理")
+        logger.debug(f"成功安装真寻依赖，日志:\n{result.stdout}", COMMAND)
     except subprocess.CalledProcessError as e:
-        logger.error(f"安装真寻依赖失败，错误:\n{e.stderr}", "插件管理", e=e)
+        logger.error(f"安装真寻依赖失败，错误:\n{e.stderr}", COMMAND, e=e)
 
 
 @run_sync
@@ -61,7 +63,7 @@ def _file_handle(latest_version: str | None):
         latest_version: 版本号
     """
     BACKUP_PATH.mkdir(exist_ok=True, parents=True)
-    logger.debug("开始解压文件压缩包...", "检查更新")
+    logger.debug("开始解压文件压缩包...", COMMAND)
     download_file = DOWNLOAD_GZ_FILE
     if DOWNLOAD_GZ_FILE.exists():
         tf = tarfile.open(DOWNLOAD_GZ_FILE)
@@ -69,7 +71,7 @@ def _file_handle(latest_version: str | None):
         download_file = DOWNLOAD_ZIP_FILE
         tf = zipfile.ZipFile(DOWNLOAD_ZIP_FILE)
     tf.extractall(TMP_PATH)
-    logger.debug("解压文件压缩包完成...", "检查更新")
+    logger.debug("解压文件压缩包完成...", COMMAND)
     download_file_path = TMP_PATH / next(
         x for x in os.listdir(TMP_PATH) if (TMP_PATH / x).is_dir()
     )
@@ -79,52 +81,52 @@ def _file_handle(latest_version: str | None):
     extract_path = download_file_path / BASE_PATH_STRING
     target_path = BASE_PATH
     if PYPROJECT_FILE.exists():
-        logger.debug(f"移除备份文件: {PYPROJECT_FILE}", "检查更新")
+        logger.debug(f"移除备份文件: {PYPROJECT_FILE}", COMMAND)
         shutil.move(PYPROJECT_FILE, BACKUP_PATH / PYPROJECT_FILE_STRING)
     if PYPROJECT_LOCK_FILE.exists():
-        logger.debug(f"移除备份文件: {PYPROJECT_LOCK_FILE}", "检查更新")
+        logger.debug(f"移除备份文件: {PYPROJECT_LOCK_FILE}", COMMAND)
         shutil.move(PYPROJECT_LOCK_FILE, BACKUP_PATH / PYPROJECT_LOCK_FILE_STRING)
     if REQ_TXT_FILE.exists():
-        logger.debug(f"移除备份文件: {REQ_TXT_FILE}", "检查更新")
+        logger.debug(f"移除备份文件: {REQ_TXT_FILE}", COMMAND)
         shutil.move(REQ_TXT_FILE, BACKUP_PATH / REQ_TXT_FILE_STRING)
     if _pyproject.exists():
-        logger.debug("移动文件: pyproject.toml", "检查更新")
+        logger.debug("移动文件: pyproject.toml", COMMAND)
         shutil.move(_pyproject, PYPROJECT_FILE)
     if _lock_file.exists():
-        logger.debug("移动文件: poetry.lock", "检查更新")
+        logger.debug("移动文件: poetry.lock", COMMAND)
         shutil.move(_lock_file, PYPROJECT_LOCK_FILE)
     if _req_file.exists():
-        logger.debug("移动文件: requirements.txt", "检查更新")
+        logger.debug("移动文件: requirements.txt", COMMAND)
         shutil.move(_req_file, REQ_TXT_FILE)
     for folder in REPLACE_FOLDERS:
         """移动指定文件夹"""
         _dir = BASE_PATH / folder
         _backup_dir = BACKUP_PATH / folder
         if _backup_dir.exists():
-            logger.debug(f"删除备份文件夹 {_backup_dir}", "检查更新")
+            logger.debug(f"删除备份文件夹 {_backup_dir}", COMMAND)
             shutil.rmtree(_backup_dir)
         if _dir.exists():
-            logger.debug(f"移动旧文件夹 {_dir}", "检查更新")
+            logger.debug(f"移动旧文件夹 {_dir}", COMMAND)
             shutil.move(_dir, _backup_dir)
         else:
-            logger.warning(f"文件夹 {_dir} 不存在，跳过删除", "检查更新")
+            logger.warning(f"文件夹 {_dir} 不存在，跳过删除", COMMAND)
     for folder in REPLACE_FOLDERS:
         src_folder_path = extract_path / folder
         dest_folder_path = target_path / folder
         if src_folder_path.exists():
             logger.debug(
-                f"移动文件夹: {src_folder_path} -> {dest_folder_path}", "检查更新"
+                f"移动文件夹: {src_folder_path} -> {dest_folder_path}", COMMAND
             )
             shutil.move(src_folder_path, dest_folder_path)
         else:
-            logger.debug(f"源文件夹不存在: {src_folder_path}", "检查更新")
+            logger.debug(f"源文件夹不存在: {src_folder_path}", COMMAND)
     if tf:
         tf.close()
     if download_file.exists():
-        logger.debug(f"删除下载文件: {download_file}", "检查更新")
+        logger.debug(f"删除下载文件: {download_file}", COMMAND)
         download_file.unlink()
     if extract_path.exists():
-        logger.debug(f"删除解压文件夹: {extract_path}", "检查更新")
+        logger.debug(f"删除解压文件夹: {extract_path}", COMMAND)
         shutil.rmtree(extract_path)
     if TMP_PATH.exists():
         shutil.rmtree(TMP_PATH)
@@ -134,7 +136,35 @@ def _file_handle(latest_version: str | None):
     install_requirement()
 
 
-class UpdateManage:
+class UpdateManager:
+    @classmethod
+    async def update_webui(cls) -> str:
+        from zhenxun.builtin_plugins.web_ui.public.data_source import (
+            update_webui_assets,
+        )
+
+        WEBUI_PATH = DATA_PATH / "web_ui" / "public"
+        BACKUP_PATH = DATA_PATH / "web_ui" / "backup_public"
+        if WEBUI_PATH.exists():
+            if BACKUP_PATH.exists():
+                logger.debug(f"删除旧的备份webui文件夹 {BACKUP_PATH}", COMMAND)
+                shutil.rmtree(BACKUP_PATH)
+            WEBUI_PATH.rename(BACKUP_PATH)
+        try:
+            await update_webui_assets()
+            logger.info("更新webui成功...", COMMAND)
+            if BACKUP_PATH.exists():
+                logger.debug(f"删除旧的webui文件夹 {BACKUP_PATH}", COMMAND)
+                shutil.rmtree(BACKUP_PATH)
+            return "Webui更新成功！"
+        except Exception as e:
+            logger.error("更新webui失败...", COMMAND, e=e)
+            if BACKUP_PATH.exists():
+                logger.debug(f"恢复旧的webui文件夹 {BACKUP_PATH}", COMMAND)
+                BACKUP_PATH.rename(WEBUI_PATH)
+            raise e
+        return ""
+
     @classmethod
     async def check_version(cls) -> str:
         """检查更新版本
@@ -166,7 +196,7 @@ class UpdateManage:
         返回:
             str | None: 返回消息
         """
-        logger.info("开始下载真寻最新版文件....", "检查更新")
+        logger.info("开始下载真寻最新版文件....", COMMAND)
         cur_version = cls.__get_version()
         url = None
         new_version = None
@@ -186,11 +216,11 @@ class UpdateManage:
         if not url:
             return "获取版本下载链接失败..."
         if TMP_PATH.exists():
-            logger.debug(f"删除临时文件夹 {TMP_PATH}", "检查更新")
+            logger.debug(f"删除临时文件夹 {TMP_PATH}", COMMAND)
             shutil.rmtree(TMP_PATH)
         logger.debug(
             f"开始更新版本：{cur_version} -> {new_version} | 下载链接：{url}",
-            "检查更新",
+            COMMAND,
         )
         await PlatformUtils.send_superuser(
             bot,
@@ -201,7 +231,7 @@ class UpdateManage:
             DOWNLOAD_GZ_FILE if version_type == "release" else DOWNLOAD_ZIP_FILE
         )
         if await AsyncHttpx.download_file(url, download_file, stream=True):
-            logger.debug("下载真寻最新版文件完成...", "检查更新")
+            logger.debug("下载真寻最新版文件完成...", COMMAND)
             await _file_handle(new_version)
             result = "版本更新完成"
             return (
@@ -210,7 +240,7 @@ class UpdateManage:
                 "请重新启动真寻以完成更新!"
             )
         else:
-            logger.debug("下载真寻最新版文件失败...", "检查更新")
+            logger.debug("下载真寻最新版文件失败...", COMMAND)
         return ""
 
     @classmethod

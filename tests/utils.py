@@ -5,6 +5,10 @@ from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, MessageSegme
 from nonebot.adapters.onebot.v11.event import Sender
 
 
+def get_reply_cq(uid: int | str) -> str:
+    return f"[CQ:reply,id={uid}]"
+
+
 def get_response_json(base_path: Path, file: str) -> dict:
     try:
         return json.loads(
