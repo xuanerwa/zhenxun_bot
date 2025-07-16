@@ -49,6 +49,7 @@ multidict = ">=6.0.0,!=6.3.2"
 
 redis = { version = ">=5", optional = true }
 asyncpg = { version = ">=0.20.0", optional = true }
+alibabacloud-devops20210625 = "^5.0.2"
 
 [tool.poetry.group.dev.dependencies]
 nonebug = "^0.4"

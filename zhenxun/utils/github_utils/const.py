@@ -60,7 +60,10 @@ Aliyun_AccessKey_ID = "LTAI5tNmf7KaTAuhcvRobAQs"
 Aliyun_Secret_AccessKey_encrypted = "NmJ3d2VNRU1MREY0T1RtRnBqMlFqdlBxN3pMUk1j"
 """阿里云 Secret Access Key """
 
-RDC_access_token_encrypted = "cHQtYXp0allnQWpub0FYZWpqZm1RWGtneHk0XzBlMmYzZTZmLWQwOWItNDE4Mi1iZWUxLTQ1ZTFkYjI0NGRlMg=="
+RDC_access_token_encrypted = (
+    "cHQtYXp0allnQWpub0FYZWpqZm1RWGtneHk0XzBlMmYzZTZmLWQwOWItNDE4Mi1iZWUx"
+    "LTQ1ZTFkYjI0NGRlMg=="
+)
 """RDC Access Token """
 
 ALIYUN_REPO_MAPPING = {
