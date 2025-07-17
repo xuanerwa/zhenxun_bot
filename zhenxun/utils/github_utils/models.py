@@ -445,6 +445,56 @@ class AliyunFileInfo:
         except Exception as e:
             raise ValueError(f"获取仓库树信息失败: {e}")
 
+    @classmethod
+    async def get_newest_commit(cls, repo: str, branch: str = "main") -> str:
+        """获取最新提交
+        参数:
+            repo: 仓库名称
+            branch: sha 分支名称/标签名称/提交版本号
+        返回:
+            commit: 最新提交信息
+        """
+        try:
+            repository_id = ALIYUN_REPO_MAPPING.get(repo)
+            if not repository_id:
+                raise ValueError(f"未找到仓库 {repo} 对应的阿里云仓库ID")
+
+            config = open_api_models.Config(
+                access_key_id=Aliyun_AccessKey_ID,
+                access_key_secret=base64.b64decode(
+                    Aliyun_Secret_AccessKey_encrypted.encode()
+                ).decode(),
+                endpoint=ALIYUN_ENDPOINT,
+                region_id=ALIYUN_REGION,
+            )
+
+            client = devops20210625Client(config)
+
+            request = devops_20210625_models.GetRepositoryCommitRequest(
+                organization_id=ALIYUN_ORG_ID,
+                access_token=base64.b64decode(
+                    RDC_access_token_encrypted.encode()
+                ).decode(),
+            )
+
+            runtime = util_models.RuntimeOptions()
+            headers = {}
+
+            response = await client.get_repository_commit_with_options_async(
+                repository_id, branch, request, headers, runtime
+            )
+
+            if response and response.body:
+                if not response.body.success:
+                    raise ValueError(
+                        f"阿里云请求失败: {response.body.error_code} - "
+                        f"{response.body.error_message}"
+                    )
+                return response.body.result.id or ""
+            raise ValueError("获取仓库commit信息失败")
+        except Exception as e:
+            raise ValueError(f"获取仓库commit信息失败: {e}")
+
     def export_files(
         self, tree_list: list[AliyunTree], module_path: str, is_dir: bool
     ) -> list[str]:
