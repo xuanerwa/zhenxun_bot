@@ -1,8 +1,13 @@
+import base64
 import contextlib
 import sys
 from typing import Protocol
 
 from aiocache import cached
+from alibabacloud_devops20210625 import models as devops_20210625_models
+from alibabacloud_devops20210625.client import Client as devops20210625Client
+from alibabacloud_tea_openapi import models as open_api_models
+from alibabacloud_tea_util import models as util_models
 from nonebot.compat import model_dump
 from pydantic import BaseModel, Field
 
@@ -14,11 +19,18 @@ else:
     from strenum import StrEnum
 
 from .const import (
+    ALIYUN_ENDPOINT,
+    ALIYUN_ORG_ID,
+    ALIYUN_REGION,
+    ALIYUN_REPO_MAPPING,
     CACHED_API_TTL,
     GIT_API_COMMIT_FORMAT,
     GIT_API_PROXY_COMMIT_FORMAT,
     GIT_API_TREES_FORMAT,
     JSD_PACKAGE_API_FORMAT,
+    Aliyun_AccessKey_ID,
+    Aliyun_Secret_AccessKey_encrypted,
+    RDC_access_token_encrypted,
 )
 from .func import (
     get_fastest_archive_formats,
@@ -270,3 +282,239 @@ class GitHubStrategy:
     def get_files(self, module_path: str, is_dir: bool = True) -> list[str]:
         """获取文件路径"""
         return self.export_files(module_path, is_dir)
+
+
+class AliyunTreeType(StrEnum):
+    """阿里云树类型"""
+
+    FILE = "blob"
+    DIR = "tree"
+
+
+class AliyunTree(BaseModel):
+    """阿里云树节点"""
+
+    id: str
+    is_lfs: bool = Field(alias="isLFS", default=False)
+    mode: str
+    name: str
+    path: str
+    type: AliyunTreeType
+
+    class Config:
+        populate_by_name = True
+
+
+class AliyunFileInfo:
+    """阿里云策略"""
+
+    content: str
+    """文件内容"""
+    file_path: str
+    """文件路径"""
+    ref: str
+    """分支/标签/提交版本"""
+    repository_id: str
+    """仓库ID"""
+
+    @classmethod
+    async def get_file_content(
+        cls, file_path: str, repo: str, ref: str = "main"
+    ) -> str:
+        """获取文件内容
+
+        参数:
+            file_path: 文件路径
+            repo: 仓库名称
+            ref: 分支名称/标签名称/提交版本号
+
+        返回:
+            str: 文件内容
+        """
+        try:
+            repository_id = ALIYUN_REPO_MAPPING.get(repo)
+            if not repository_id:
+                raise ValueError(f"未找到仓库 {repo} 对应的阿里云仓库ID")
+            config = open_api_models.Config(
+                access_key_id=Aliyun_AccessKey_ID,
+                access_key_secret=base64.b64decode(
+                    Aliyun_Secret_AccessKey_encrypted.encode()
+                ).decode(),
+                endpoint=ALIYUN_ENDPOINT,
+                region_id=ALIYUN_REGION,
+            )
+
+            client = devops20210625Client(config)
+
+            request = devops_20210625_models.GetFileBlobsRequest(
+                organization_id=ALIYUN_ORG_ID,
+                file_path=file_path,
+                ref=ref,
+                access_token=base64.b64decode(
+                    RDC_access_token_encrypted.encode()
+                ).decode(),
+            )
+
+            runtime = util_models.RuntimeOptions()
+            headers = {}
+
+            response = await client.get_file_blobs_with_options_async(
+                repository_id,
+                request,
+                headers,
+                runtime,
+            )
+
+            if response and response.body and response.body.result:
+                if not response.body.success:
+                    raise ValueError(
+                        f"阿里云请求失败: {response.body.error_code} - "
+                        f"{response.body.error_message}"
+                    )
+                return response.body.result.content or ""
+
+            raise ValueError("获取阿里云文件内容失败")
+        except Exception as e:
+            raise ValueError(f"获取阿里云文件内容失败: {e}")
+
+    @classmethod
+    async def get_repository_tree(
+        cls,
+        repo: str,
+        path: str = "",
+        ref: str = "main",
+        search_type: str = "DIRECT",
+    ) -> list[AliyunTree]:
+        """获取仓库树信息
+
+        参数:
+            repo: 仓库名称
+            path: 代码仓库内的文件路径
+            ref: 分支名称/标签名称/提交版本
+            search_type: 查找策略
+            "DIRECT"  # 仅展示当前目录下的内容
+            "RECURSIVE"  # 递归查找当前路径下的所有文件
+            "FLATTEN"  # 扁平化展示
+
+        返回:
+            list[AliyunTree]: 仓库树信息列表
+        """
+        try:
+            repository_id = ALIYUN_REPO_MAPPING.get(repo)
+            if not repository_id:
+                raise ValueError(f"未找到仓库 {repo} 对应的阿里云仓库ID")
+
+            config = open_api_models.Config(
+                access_key_id=Aliyun_AccessKey_ID,
+                access_key_secret=base64.b64decode(
+                    Aliyun_Secret_AccessKey_encrypted.encode()
+                ).decode(),
+                endpoint=ALIYUN_ENDPOINT,
+                region_id=ALIYUN_REGION,
+            )
+
+            client = devops20210625Client(config)
+
+            request = devops_20210625_models.ListRepositoryTreeRequest(
+                organization_id=ALIYUN_ORG_ID,
+                path=path,
+                access_token=base64.b64decode(
+                    RDC_access_token_encrypted.encode()
+                ).decode(),
+                ref_name=ref,
+                type=search_type,
+            )
+
+            runtime = util_models.RuntimeOptions()
+            headers = {}
+
+            response = await client.list_repository_tree_with_options_async(
+                repository_id, request, headers, runtime
+            )
+
+            if response and response.body:
+                if not response.body.success:
+                    raise ValueError(
+                        f"阿里云请求失败: {response.body.error_code} - "
+                        f"{response.body.error_message}"
+                    )
+                return [
+                    AliyunTree(**item.to_map()) for item in (response.body.result or [])
+                ]
+            raise ValueError("获取仓库树信息失败")
+        except Exception as e:
+            raise ValueError(f"获取仓库树信息失败: {e}")
+
+    @classmethod
+    async def get_newest_commit(cls, repo: str, branch: str = "main") -> str:
+        """获取最新提交
+        参数:
+            repo: 仓库名称
+            branch: sha 分支名称/标签名称/提交版本号
+        返回:
+            commit: 最新提交信息
+        """
+        try:
+            repository_id = ALIYUN_REPO_MAPPING.get(repo)
+            if not repository_id:
+                raise ValueError(f"未找到仓库 {repo} 对应的阿里云仓库ID")
+
+            config = open_api_models.Config(
+                access_key_id=Aliyun_AccessKey_ID,
+                access_key_secret=base64.b64decode(
+                    Aliyun_Secret_AccessKey_encrypted.encode()
+                ).decode(),
+                endpoint=ALIYUN_ENDPOINT,
+                region_id=ALIYUN_REGION,
+            )
+
+            client = devops20210625Client(config)
+
+            request = devops_20210625_models.GetRepositoryCommitRequest(
+                organization_id=ALIYUN_ORG_ID,
+                access_token=base64.b64decode(
+                    RDC_access_token_encrypted.encode()
+                ).decode(),
+            )
+
+            runtime = util_models.RuntimeOptions()
+            headers = {}
+
+            response = await client.get_repository_commit_with_options_async(
+                repository_id, branch, request, headers, runtime
+            )
+
+            if response and response.body:
+                if not response.body.success:
+                    raise ValueError(
+                        f"阿里云请求失败: {response.body.error_code} - "
+                        f"{response.body.error_message}"
+                    )
+                return response.body.result.id or ""
+            raise ValueError("获取仓库commit信息失败")
+        except Exception as e:
+            raise ValueError(f"获取仓库commit信息失败: {e}")
+
+    def export_files(
+        self, tree_list: list[AliyunTree], module_path: str, is_dir: bool
+    ) -> list[str]:
+        """导出文件路径"""
+        return [
+            file.path
+            for file in tree_list
+            if file.type == AliyunTreeType.FILE
+            and file.path.startswith(module_path)
+            and (not is_dir or file.path[len(module_path)] == "/" or not module_path)
+        ]
+
+    @classmethod
+    async def parse_repo_info(cls, repo: str) -> list[str]:
+        """解析仓库信息获取仓库树"""
+        repository_id = ALIYUN_REPO_MAPPING.get(repo)
+        if not repository_id:
+            raise ValueError(f"未找到仓库 {repo} 对应的阿里云仓库ID")
+
+        tree_list = await cls.get_repository_tree(
+            repo=repo,
+        )
+        return cls().export_files(tree_list, "", True)

@@ -44,3 +44,33 @@ GIT_API_PROXY_COMMIT_FORMAT = (
     "https://git-api.zhenxun.org/repos/{owner}/{repo}/commits/{branch}"
 )
 """git api commit地址格式 (代理)"""
+
+ALIYUN_ORG_ID = "67a361cf556e6cdab537117a"
+"""阿里云 organization id"""
+
+ALIYUN_ENDPOINT = "devops.cn-hangzhou.aliyuncs.com"
+"""阿里云 endpoint"""
+
+ALIYUN_REGION = "cn-hangzhou"
+"""阿里云区域"""
+
+Aliyun_AccessKey_ID = "LTAI5tNmf7KaTAuhcvRobAQs"
+"""阿里云AccessKey ID"""
+
+Aliyun_Secret_AccessKey_encrypted = "NmJ3d2VNRU1MREY0T1RtRnBqMlFqdlBxN3pMUk1j"
+"""阿里云 Secret Access Key """
+
+RDC_access_token_encrypted = (
+    "cHQtYXp0allnQWpub0FYZWpqZm1RWGtneHk0XzBlMmYzZTZmLWQwOWItNDE4Mi1iZWUx"
+    "LTQ1ZTFkYjI0NGRlMg=="
+)
+"""RDC Access Token """
+
+ALIYUN_REPO_MAPPING = {
+    "zhenxun-bot-resources": "4957431",
+    "zhenxun_bot_plugins_index": "4957418",
+    "zhenxun_bot_plugins": "4957429",
+    "zhenxun_docs": "4957426",
+    "zhenxun_bot": "4957428",
+}
+"""阿里云仓库ID映射"""

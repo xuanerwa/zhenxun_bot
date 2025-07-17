@@ -45,6 +45,7 @@ nonebot-plugin-alconna = "^0.54.0"
 tenacity = "^9.0.0"
 nonebot-plugin-uninfo = ">0.4.1"
 pydantic = "2.10.6"
+alibabacloud-devops20210625 = "^5.0.2"
 
 [tool.poetry.group.dev.dependencies]
 nonebug = "^0.4"
