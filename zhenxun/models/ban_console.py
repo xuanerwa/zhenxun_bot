@@ -21,6 +21,8 @@ class BanConsole(Model):
     """使用ban命令的用户等级"""
     ban_time = fields.BigIntField()
     """ban开始的时间"""
+    ban_reason = fields.TextField(null=True, default=None)
+    """ban的理由"""
     duration = fields.BigIntField()
     """ban时长"""
     operator = fields.CharField(255)
@@ -107,7 +109,9 @@ class BanConsole(Model):
             if user.duration == -1:
                 return -1
             _time = time.time() - (user.ban_time + user.duration)
-            return 0 if _time > 0 else int(time.time() - user.ban_time - user.duration)
+            if _time < 0:
+                return int(time.time() - user.ban_time - user.duration)
+            await user.delete()
         return 0
 
     @classmethod
@@ -133,6 +137,7 @@ class BanConsole(Model):
         user_id: str | None,
         group_id: str | None,
         ban_level: int,
+        reason: str | None,
         duration: int,
         operator: str | None = None,
     ):
@@ -157,6 +162,7 @@ class BanConsole(Model):
             group_id=group_id,
             ban_level=ban_level,
             ban_time=int(time.time()),
+            ban_reason=reason,
             duration=duration,
             operator=operator or 0,
         )
@@ -206,4 +212,5 @@ class BanConsole(Model):
         return [
             "CREATE INDEX idx_ban_console_user_id ON ban_console(user_id);",
             "CREATE INDEX idx_ban_console_group_id ON ban_console(group_id);",
+            "ALTER TABLE ban_console ADD COLUMN ban_reason TEXT DEFAULT NULL;",
         ]

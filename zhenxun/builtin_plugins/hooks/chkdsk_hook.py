@@ -92,7 +92,12 @@ async def _(
         if module:
             if _blmt.check(f"{user_id}__{module}"):
                 await BanConsole.ban(
-                    user_id, group_id, 9, malicious_ban_time * 60, bot.self_id
+                    user_id,
+                    group_id,
+                    9,
+                    "恶意触发命令检测",
+                    malicious_ban_time * 60,
+                    bot.self_id,
                 )
                 logger.info(
                     f"触发了恶意触发检测: {matcher.plugin_name}",

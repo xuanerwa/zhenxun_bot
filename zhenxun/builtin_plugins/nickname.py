@@ -275,7 +275,9 @@ async def _(bot: Bot, session: Uninfo):
             await GroupInfoUser.set_user_nickname(session.user.id, group_id, "")
         else:
             await FriendUser.set_user_nickname(session.user.id, "")
-        await BanConsole.ban(session.user.id, group_id, 9, 60, bot.self_id)
+        await BanConsole.ban(
+            session.user.id, group_id, 9, "用户昵称违规", 60, bot.self_id
+        )
         return
     else:
         await MessageUtils.build_message("你在做梦吗？你没有昵称啊").finish(

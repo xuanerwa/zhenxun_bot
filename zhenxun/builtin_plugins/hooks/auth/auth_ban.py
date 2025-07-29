@@ -27,7 +27,7 @@ Config.add_plugin_config(
 )
 
 
-def calculate_ban_time(ban_record: BanConsole | None) -> int:
+async def calculate_ban_time(ban_record: BanConsole | None) -> int:
     """根据ban记录计算剩余ban时间
 
     参数:
@@ -43,7 +43,10 @@ def calculate_ban_time(ban_record: BanConsole | None) -> int:
         return -1
 
     _time = time.time() - (ban_record.ban_time + ban_record.duration)
-    return 0 if _time > 0 else int(abs(_time))
+    if _time < 0:
+        return int(abs(_time))
+    await ban_record.delete()
+    return 0
 
 
 async def is_ban(user_id: str | None, group_id: str | None) -> int:
@@ -113,7 +116,7 @@ async def is_ban(user_id: str | None, group_id: str | None) -> int:
         for result in results:
             if result.duration > 0 or result.duration == -1:
                 # 直接计算ban时间，避免再次查询数据库
-                ban_time = calculate_ban_time(result)
+                ban_time = await calculate_ban_time(result)
                 if ban_time == -1 or ban_time > max_ban_time:
                     max_ban_time = ban_time
 

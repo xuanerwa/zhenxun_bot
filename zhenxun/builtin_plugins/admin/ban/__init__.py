@@ -36,11 +36,12 @@ __plugin_meta__ = PluginMetadata(
     usage="""
     普通管理员
         格式:
-        ban [At用户] ?[-t [时长(分钟)]]
+        ban [At用户] ?[-t [时长(分钟)]] ?[-r [理由]]
 
         示例:
         ban @用户          : 永久拉黑用户
         ban @用户 -t 100   : 拉黑用户100分钟
+        ban @用户 -t 10 -r 坏     : 拉黑用户10分钟并携带理由
         unban @用户        : 从小黑屋中拉出来
     """.strip(),
     extra=PluginExtraData(
@@ -50,7 +51,7 @@ __plugin_meta__ = PluginMetadata(
         superuser_help="""
         超级管理员额外命令
         格式:
-        ban [At用户/用户Id] ?[-t [时长]]
+        ban [At用户/用户Id] ?[-t [时长]] ?[-r [理由]]
         unban --id [idx]  : 通过id来进行unban操作
         ban列表: 获取所有Ban数据
 
@@ -66,10 +67,13 @@ __plugin_meta__ = PluginMetadata(
         私聊下:
             示例:
             ban 123456789          : 永久拉黑用户123456789
+            ban 123456789 -r 坏     : 永久拉黑用户123456789并携带理由
             ban 123456789 -t 100   : 拉黑用户123456789 100分钟
 
             ban -g 999999              : 拉黑群组为999999的群组
             ban -g 999999 -t 100       : 拉黑群组为999999的群组 100分钟
+            ban -g 999999 -r 坏     : 永久拉黑群组为999999的群组并携带理由
+
 
             unban 123456789     : 从小黑屋中拉出来
             unban -g 999999     : 将群组9999999从小黑屋中拉出来
@@ -94,6 +98,9 @@ __plugin_meta__ = PluginMetadata(
                         "user_id": AICallableProperties(
                             type="string", description="用户的id"
                         ),
+                        "reason": AICallableProperties(
+                            type="string", description="封禁理由"
+                        ),
                         "duration": AICallableProperties(
                             type="integer",
                             description="封禁时长（选择的值只能是1-360），单位为分钟，如果频繁触发，按情况增加",
@@ -112,6 +119,7 @@ _ban_matcher = on_alconna(
     Alconna(
         "ban",
         Args["user?", [str, At]],
+        Option("-r|--reason", Args["reason", str]),
         Option("-g|--group", Args["group_id", str]),
         Option("-t|--time", Args["duration", int]),
     ),
@@ -185,6 +193,7 @@ async def _(
     session: EventSession,
     arparma: Arparma,
     user: Match[str | At],
+    reason: Match[str],
     duration: Match[int],
     group_id: Match[str],
 ):
@@ -200,13 +209,14 @@ async def _(
             user_id = user.result
     _duration = duration.result * 60 if duration.available else -1
     _duration_text = f"{duration.result} 分钟" if duration.available else " 到世界湮灭"
+    ban_reason = reason.result if reason.available else None
     if (gid := session.id3 or session.id2) and not group_id.available:
         if not user_id or (
             user_id == bot.self_id and session.id1 not in bot.config.superusers
         ):
             _duration = 0.5
             await MessageUtils.build_message("倒反天罡，小小管理速速退下！").send()
-            await BanManage.ban(session.id1, gid, 30, session, True)
+            await BanManage.ban(session.id1, gid, ban_reason, 30, session, True)
             _duration_text = "半 分钟"
             logger.info(
                 f"尝试ban {BotConfig.self_nickname} 反被拿下",
@@ -222,7 +232,12 @@ async def _(
                 ]
             ).finish(reply_to=True)
         await BanManage.ban(
-            user_id, gid, _duration, session, session.id1 in bot.config.superusers
+            user_id,
+            gid,
+            ban_reason,
+            _duration,
+            session,
+            session.id1 in bot.config.superusers,
         )
         logger.info(
             "管理员Ban",
@@ -244,7 +259,7 @@ async def _(
         ).finish(reply_to=True)
     elif session.id1 in bot.config.superusers:
         _group_id = group_id.result if group_id.available else None
-        await BanManage.ban(user_id, _group_id, _duration, session, True)
+        await BanManage.ban(user_id, _group_id, ban_reason, _duration, session, True)
         logger.info(
             "超级用户Ban",
             arparma.header_result,
@@ -296,7 +311,7 @@ async def _(
                     At(flag="user", target=user_id)
                     if isinstance(user.result, At)
                     else result
-                ),  # type: ignore
+                ),
                 " 从黑屋中拉了出来并急救了一下!",
             ]
         ).finish(reply_to=True)
