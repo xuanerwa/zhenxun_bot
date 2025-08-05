@@ -110,7 +110,7 @@ class BanConsole(Model):
                 return -1
             _time = time.time() - (user.ban_time + user.duration)
             if _time < 0:
-                return int(time.time() - user.ban_time - user.duration)
+                return int(abs(_time))
             await user.delete()
         return 0
 

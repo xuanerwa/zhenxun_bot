@@ -65,6 +65,9 @@ class BanManage:
                 duration = "∞"
             else:
                 duration = int((data.ban_time + data.duration - time.time()) / 60)
+            if isinstance(duration, int) and duration < 0:
+                await data.delete()
+                continue
             row_data.append(
                 [
                     data.id,
@@ -111,7 +114,7 @@ class BanManage:
             is_superuser: 是否为超级用户操作
 
         返回:
-            tuple[bool, str]: 是否unban成功, 群组/用户id或提示
+            tuple[bool, str | Non]: 是否unban成功, 群组/用户id或提示
         """
         user_level = 9999
         if not is_superuser and user_id and session.id1:
@@ -123,15 +126,10 @@ class BanManage:
             if ban_data.ban_level > user_level:
                 return False, "unBan权限等级不足捏..."
             await ban_data.delete()
-            return (
-                True,
-                f"用户 {ban_data.user_id}"
-                if ban_data.user_id
-                else f"群组 {ban_data.group_id}",
-            )
+            return True, ban_data.user_id or ban_data.group_id
         elif await BanConsole.check_ban_level(user_id, group_id, user_level):
             await BanConsole.unban(user_id, group_id)
-            return True, f"群组 {group_id}"
+            return True, group_id or ""
         return False, "该用户/群组不在黑名单中不足捏..."
 
     @classmethod
