@@ -17,17 +17,33 @@ class ScheduleTargeter:
     """
 
     def __init__(self, manager: Any, **filters: Any):
-        """初始化目标选择器"""
+        """
+        初始化目标选择器
+
+        参数:
+            manager: SchedulerManager 实例。
+            **filters: 过滤条件，支持plugin_name、group_id、bot_id等字段。
+        """
         self._manager = manager
         self._filters = {k: v for k, v in filters.items() if v is not None}
 
     async def _get_schedules(self):
-        """根据过滤器获取任务"""
+        """
+        根据过滤器获取任务
+
+        返回:
+            list[ScheduledJob]: 符合过滤条件的任务列表。
+        """
         query = ScheduleRepository.filter(**self._filters)
         return await query.all()
 
     def _generate_target_description(self) -> str:
-        """根据过滤条件生成友好的目标描述"""
+        """
+        根据过滤条件生成友好的目标描述
+
+        返回:
+            str: 描述目标的友好字符串。
+        """
         if "id" in self._filters:
             return f"任务 ID {self._filters['id']} 的"
 

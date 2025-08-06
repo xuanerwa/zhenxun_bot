@@ -3,7 +3,7 @@ from tortoise import fields
 from zhenxun.services.db_context import Model
 
 
-class ScheduleInfo(Model):
+class ScheduledJob(Model):
     id = fields.IntField(pk=True, generated=True, auto_increment=True)
     """自增id"""
     bot_id = fields.CharField(
@@ -34,5 +34,5 @@ class ScheduleInfo(Model):
     """创建时间"""
 
     class Meta:  # pyright: ignore [reportIncompatibleVariableOverride]
-        table = "schedule_info"
+        table = "scheduled_jobs"
         table_description = "通用定时任务表"

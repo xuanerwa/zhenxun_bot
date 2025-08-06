@@ -130,6 +130,7 @@ class Retry:
         wait_exp_multiplier: int = 1,
         wait_exp_max: int = 10,
         log_name: str | None = None,
+        on_success: Callable[[Any], Any] | None = None,
         on_failure: Callable[[Exception], Any] | None = None,
         return_on_failure: Any = _SENTINEL,
     ):
@@ -146,6 +147,8 @@ class Retry:
             wait_exp_multiplier: 指数退避的乘数。
             wait_exp_max: 指数退避的最大等待时间。
             log_name: 用于日志记录的操作名称，方便区分不同的重试场景。
+            on_success: (可选) 当函数成功执行（且未触发重试）后，
+                        会调用此函数，并将函数的返回值作为参数传入。
             on_failure: (可选) 当所有重试都失败后，在抛出异常或返回默认值之前，
                         会调用此函数，并将最终的异常实例作为参数传入。
             return_on_failure: (可选) 如果设置了此参数，当所有重试失败后，
@@ -186,14 +189,49 @@ class Retry:
             decorated_func = tenacity_retry_decorator(func)
 
             if return_on_failure is _SENTINEL:
-                return decorated_func
+                if is_coroutine_callable(func):
+
+                    @wraps(func)
+                    async def async_success_wrapper(*args, **kwargs):
+                        result = await decorated_func(*args, **kwargs)
+                        if on_success:
+                            if is_coroutine_callable(on_success):
+                                await on_success(result)
+                            else:
+                                on_success(result)
+                        return result
+
+                    return async_success_wrapper
+                else:
+
+                    @wraps(func)
+                    def sync_success_wrapper(*args, **kwargs):
+                        result = decorated_func(*args, **kwargs)
+                        if on_success:
+                            if is_coroutine_callable(on_success):
+                                logger.error(
+                                    f"不能在同步函数 '{func.__name__}' 中调用异步的 "
+                                    f"on_success 回调。",
+                                    LOG_COMMAND,
+                                )
+                            else:
+                                on_success(result)
+                        return result
+
+                    return sync_success_wrapper
 
             if is_coroutine_callable(func):
 
                 @wraps(func)
                 async def async_wrapper(*args, **kwargs):
                     try:
-                        return await decorated_func(*args, **kwargs)
+                        result = await decorated_func(*args, **kwargs)
+                        if on_success:
+                            if is_coroutine_callable(on_success):
+                                await on_success(result)
+                            else:
+                                on_success(result)
+                        return result
                     except Exception as e:
                         if on_failure:
                             if is_coroutine_callable(on_failure):
@@ -208,7 +246,17 @@ class Retry:
                 @wraps(func)
                 def sync_wrapper(*args, **kwargs):
                     try:
-                        return decorated_func(*args, **kwargs)
+                        result = decorated_func(*args, **kwargs)
+                        if on_success:
+                            if is_coroutine_callable(on_success):
+                                logger.error(
+                                    f"不能在同步函数 '{func.__name__}' 中调用异步的 "
+                                    f"on_success 回调。",
+                                    LOG_COMMAND,
+                                )
+                            else:
+                                on_success(result)
+                        return result
                     except Exception as e:
                         if on_failure:
                             if is_coroutine_callable(on_failure):

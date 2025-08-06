@@ -1,8 +1,10 @@
 import asyncio
+from typing import Any
 
-from zhenxun.models.schedule_info import ScheduleInfo
+from zhenxun.models.scheduled_job import ScheduledJob
 from zhenxun.services.scheduler import scheduler_manager
 from zhenxun.utils._image_template import ImageTemplate, RowStyle
+from zhenxun.utils.pydantic_compat import model_json_schema
 
 
 def _get_type_name(annotation) -> str:
@@ -15,10 +17,17 @@ def _get_type_name(annotation) -> str:
         return str(annotation)
 
 
-def _format_trigger(schedule: dict) -> str:
-    """格式化触发器信息为可读字符串"""
-    trigger_type = schedule.get("trigger_type")
-    config = schedule.get("trigger_config")
+def _get_schedule_attr(schedule: ScheduledJob | dict, attr_name: str) -> Any:
+    """兼容地从字典或对象获取属性"""
+    if isinstance(schedule, dict):
+        return schedule.get(attr_name)
+    return getattr(schedule, attr_name, None)
+
+
+def _format_trigger_info(schedule: ScheduledJob | dict) -> str:
+    """格式化触发器信息为可读字符串（兼容字典和对象）"""
+    trigger_type = _get_schedule_attr(schedule, "trigger_type")
+    config = _get_schedule_attr(schedule, "trigger_config")
 
     if not isinstance(config, dict):
         return f"配置错误: {config}"
@@ -51,59 +60,15 @@ def _format_trigger(schedule: dict) -> str:
         return f"未知触发器类型: {trigger_type}"
 
 
-def _format_trigger_for_card(schedule_info: ScheduleInfo | dict) -> str:
-    """为信息卡片格式化触发器规则"""
-    trigger_type = (
-        schedule_info.get("trigger_type")
-        if isinstance(schedule_info, dict)
-        else schedule_info.trigger_type
-    )
-    config = (
-        schedule_info.get("trigger_config")
-        if isinstance(schedule_info, dict)
-        else schedule_info.trigger_config
-    )
-
-    if not isinstance(config, dict):
-        return f"配置错误: {config}"
-
-    if trigger_type == "cron":
-        hour = config.get("hour", "??")
-        minute = config.get("minute", "??")
-        try:
-            hour_int = int(hour)
-            minute_int = int(minute)
-            return f"每天 {hour_int:02d}:{minute_int:02d}"
-        except (ValueError, TypeError):
-            return f"每天 {hour}:{minute}"
-    elif trigger_type == "interval":
-        units = {
-            "weeks": "周",
-            "days": "天",
-            "hours": "小时",
-            "minutes": "分钟",
-            "seconds": "秒",
-        }
-        for unit, unit_name in units.items():
-            if value := config.get(unit):
-                return f"每 {value} {unit_name}"
-        return "未知间隔"
-    elif trigger_type == "date":
-        run_date = config.get("run_date", "N/A")
-        return f"特定时间 {run_date}"
-    else:
-        return f"未知规则: {trigger_type}"
-
-
 def _format_operation_result_card(
-    title: str, schedule_info: ScheduleInfo, extra_info: list[str] | None = None
+    title: str, schedule_info: ScheduledJob, extra_info: list[str] | None = None
 ) -> str:
     """
     生成一个标准的操作结果信息卡片。
 
     参数:
         title: 卡片的标题 (例如 "✅ 成功暂停定时任务!")
-        schedule_info: 相关的 ScheduleInfo 对象
+        schedule_info: 相关的 ScheduledJob 对象
         extra_info: (可选) 额外的补充信息行
     """
     target_desc = (
@@ -120,7 +85,7 @@ def _format_operation_result_card(
         f"✓ 任务 ID: {schedule_info.id}",
         f"🖋 插件: {schedule_info.plugin_name}",
         f"🎯 目标: {target_desc}",
-        f"⏰ 时间: {_format_trigger_for_card(schedule_info)}",
+        f"⏰ 时间: {_format_trigger_info(schedule_info)}",
     ]
     if extra_info:
         info_lines.extend(extra_info)
@@ -128,27 +93,27 @@ def _format_operation_result_card(
     return "\n".join(info_lines)
 
 
-def format_pause_success(schedule_info: ScheduleInfo) -> str:
+def format_pause_success(schedule_info: ScheduledJob) -> str:
     """格式化暂停成功的消息"""
     return _format_operation_result_card("✅ 成功暂停定时任务!", schedule_info)
 
 
-def format_resume_success(schedule_info: ScheduleInfo) -> str:
+def format_resume_success(schedule_info: ScheduledJob) -> str:
     """格式化恢复成功的消息"""
     return _format_operation_result_card("▶️ 成功恢复定时任务!", schedule_info)
 
 
-def format_remove_success(schedule_info: ScheduleInfo) -> str:
+def format_remove_success(schedule_info: ScheduledJob) -> str:
     """格式化删除成功的消息"""
     return _format_operation_result_card("❌ 成功删除定时任务!", schedule_info)
 
 
-def format_trigger_success(schedule_info: ScheduleInfo) -> str:
+def format_trigger_success(schedule_info: ScheduledJob) -> str:
     """格式化手动触发成功的消息"""
     return _format_operation_result_card("🚀 成功手动触发定时任务!", schedule_info)
 
 
-def format_update_success(schedule_info: ScheduleInfo) -> str:
+def format_update_success(schedule_info: ScheduledJob) -> str:
     """格式化更新成功的消息"""
     return _format_operation_result_card("🔄️ 成功更新定时任务配置!", schedule_info)
 
@@ -174,7 +139,7 @@ def _format_params(schedule_status: dict) -> str:
 
 
 async def format_schedule_list_as_image(
-    schedules: list[ScheduleInfo], title: str, current_page: int
+    schedules: list[ScheduledJob], title: str, current_page: int
 ):
     """将任务列表格式化为图片"""
     page_size = 15
@@ -204,7 +169,7 @@ async def format_schedule_list_as_image(
             s.get("bot_id") or "N/A",
             s["group_id"] or "全局",
             s["next_run_time"],
-            _format_trigger(s),
+            _format_trigger_info(s),
             _format_params(s),
             get_status_text(s["is_enabled"]),
         ]
@@ -235,7 +200,7 @@ def format_single_status_message(status: dict) -> str:
         f"▫️ 目标: {status['group_id'] or '全局'}",
         f"▫️ 状态: {'✔️ 已启用' if status['is_enabled'] else '⏸️ 已暂停'}",
         f"▫️ 下次运行: {status['next_run_time']}",
-        f"▫️ 触发规则: {_format_trigger(status)}",
+        f"▫️ 触发规则: {_format_trigger_info(status)}",
         f"▫️ 任务参数: {_format_params(status)}",
     ]
     return "\n".join(info_lines)
@@ -260,11 +225,12 @@ async def format_plugins_list() -> str:
             and isinstance(params_model, type)
             and issubclass(params_model, BaseModel)
         ):
-            model_fields = getattr(params_model, "model_fields", None)
-            if model_fields:
+            schema = model_json_schema(params_model)
+            properties = schema.get("properties", {})
+            if properties:
                 param_info_str = "参数: " + ", ".join(
-                    f"{field_name}({_get_type_name(field_info.annotation)})"
-                    for field_name, field_info in model_fields.items()
+                    f"{field_name}({prop.get('type', 'any')})"
+                    for field_name, prop in properties.items()
                 )
         elif params_model:
             param_info_str = "⚠️ 参数模型配置错误"

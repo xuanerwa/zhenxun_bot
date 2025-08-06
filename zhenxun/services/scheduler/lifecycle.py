@@ -6,8 +6,10 @@
 
 from zhenxun.services.log import logger
 from zhenxun.utils.manager.priority_manager import PriorityLifecycle
+from zhenxun.utils.pydantic_compat import model_dump
 
 from .adapter import APSchedulerAdapter
+from .job import ScheduleContext
 from .repository import ScheduleRepository
 from .service import scheduler_manager
 
@@ -29,9 +31,9 @@ async def _load_schedules_from_db():
     logger.info("正在检查并注册声明式默认任务...")
     declared_count = 0
     for task_info in scheduler_manager._declared_tasks:
-        plugin_name = task_info["plugin_name"]
-        group_id = task_info["group_id"]
-        bot_id = task_info["bot_id"]
+        plugin_name = task_info.plugin_name
+        group_id = task_info.group_id
+        bot_id = task_info.bot_id
 
         query_kwargs = {
             "plugin_name": plugin_name,
@@ -42,12 +44,17 @@ async def _load_schedules_from_db():
 
         if not exists:
             logger.info(f"为插件 '{plugin_name}' 注册新的默认定时任务...")
+
+            trigger_config_dict = model_dump(
+                task_info.trigger, exclude={"trigger_type"}
+            )
+
             schedule = await scheduler_manager.add_schedule(
                 plugin_name=plugin_name,
                 group_id=group_id,
-                trigger_type=task_info["trigger_type"],
-                trigger_config=task_info["trigger_config"],
-                job_kwargs=task_info["job_kwargs"],
+                trigger_type=task_info.trigger.trigger_type,
+                trigger_config=trigger_config_dict,
+                job_kwargs=task_info.job_kwargs,
                 bot_id=bot_id,
             )
             if schedule:
@@ -60,3 +67,35 @@ async def _load_schedules_from_db():
 
     if declared_count > 0:
         logger.info(f"声明式任务检查完成，新注册了 {declared_count} 个默认任务。")
+
+    logger.info("正在调度声明式临时任务...")
+    ephemeral_count = 0
+    for declaration in scheduler_manager._ephemeral_declared_tasks:
+        try:
+            job_id = f"runtime::{declaration.plugin_name}::{declaration.func.__name__}"
+
+            context = ScheduleContext(
+                schedule_id=0,
+                plugin_name=job_id,
+                bot_id=None,
+                group_id=None,
+                job_kwargs={},
+            )
+
+            trigger_config_dict = model_dump(
+                declaration.trigger, exclude={"trigger_type"}
+            )
+
+            APSchedulerAdapter.add_ephemeral_job(
+                job_id=job_id,
+                func=declaration.func,
+                trigger_type=declaration.trigger.trigger_type,
+                trigger_config=trigger_config_dict,
+                context=context,
+            )
+            ephemeral_count += 1
+        except Exception as e:
+            logger.error(f"调度临时任务 '{declaration.plugin_name}' 失败", e=e)
+
+    if ephemeral_count > 0:
+        logger.info(f"临时任务调度完成，共成功加载 {ephemeral_count} 个任务。")

@@ -5,21 +5,67 @@
 它负责编排业务逻辑，并调用 Repository 和 Adapter 层来完成具体工作。
 """
 
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from datetime import datetime
+import inspect
 from typing import Any, ClassVar
+import uuid
 
 import nonebot
 from pydantic import BaseModel
 
 from zhenxun.configs.config import Config
-from zhenxun.models.schedule_info import ScheduleInfo
+from zhenxun.models.scheduled_job import ScheduledJob
 from zhenxun.services.log import logger
+from zhenxun.utils.pydantic_compat import model_dump
 
 from .adapter import APSchedulerAdapter
-from .job import _execute_job
+from .job import ScheduleContext, _execute_job
 from .repository import ScheduleRepository
 from .targeter import ScheduleTargeter
+from .triggers import BaseTrigger
+
+
+class ExecutionPolicy(BaseModel):
+    """
+    封装定时任务的执行策略，包括重试和回调。
+    """
+
+    retries: int = 0
+    retry_delay_seconds: int = 30
+    retry_backoff: bool = False
+    retry_on_exceptions: list[type[Exception]] | None = None
+    on_success_callback: Callable[[ScheduleContext, Any], Awaitable[None]] | None = None
+    on_failure_callback: (
+        Callable[[ScheduleContext, Exception], Awaitable[None]] | None
+    ) = None
+
+    class Config:
+        arbitrary_types_allowed = True
+
+
+class ScheduledJobDeclaration(BaseModel):
+    """用于在启动时声明默认定时任务的内部数据模型"""
+
+    plugin_name: str
+    group_id: str | None
+    bot_id: str | None
+    trigger: BaseTrigger
+    job_kwargs: dict[str, Any]
+
+    class Config:
+        arbitrary_types_allowed = True
+
+
+class EphemeralJobDeclaration(BaseModel):
+    """用于在启动时声明临时任务的内部数据模型"""
+
+    plugin_name: str
+    func: Callable[..., Coroutine]
+    trigger: BaseTrigger
+
+    class Config:
+        arbitrary_types_allowed = True
 
 
 class SchedulerManager:
@@ -27,7 +73,8 @@ class SchedulerManager:
     _registered_tasks: ClassVar[
         dict[str, dict[str, Callable | type[BaseModel] | None]]
     ] = {}
-    _declared_tasks: ClassVar[list[dict[str, Any]]] = []
+    _declared_tasks: ClassVar[list[ScheduledJobDeclaration]] = []
+    _ephemeral_declared_tasks: ClassVar[list[EphemeralJobDeclaration]] = []
     _running_tasks: ClassVar[set] = set()
 
     def target(self, **filters: Any) -> ScheduleTargeter:
@@ -42,24 +89,29 @@ class SchedulerManager:
         """
         return ScheduleTargeter(self, **filters)
 
-    def task(
+    def job(
         self,
-        trigger: str,
+        trigger: BaseTrigger,
         group_id: str | None = None,
         bot_id: str | None = None,
-        **trigger_kwargs,
+        default_params: BaseModel | None = None,
+        policy: ExecutionPolicy | None = None,
     ):
         """
-        声明式定时任务装饰器
+        声明式定时任务的统一装饰器。
+
+        此装饰器用于将一个异步函数注册为一个可调度的定时任务，
+        并为其创建一个默认的调度计划。
 
         参数:
-            trigger: 触发器类型，如'cron'、'interval'等。
-            group_id: 目标群组ID，None表示全局任务。
-            bot_id: 目标Bot ID，None表示使用默认Bot。
-            **trigger_kwargs: 触发器配置参数。
-
-        返回:
-            Callable: 装饰器函数。
+            trigger: 一个由 `Trigger` 工厂类创建的触发器配置对象
+                     (例如 `Trigger.cron(hour=8)`)。
+            group_id: 默认的目标群组ID。`None` 表示全局任务，
+                      `SchedulerManager.ALL_GROUPS` 表示所有群组。
+            bot_id: 默认的目标Bot ID，`None` 表示使用任意可用Bot。
+            default_params: (可选) 一个Pydantic模型实例，为任务提供默认参数。
+                           任务函数需要有对应的Pydantic模型类型注解。
+            policy: (可选) 一个ExecutionPolicy实例，定义任务的执行策略。
         """
 
         def decorator(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
@@ -69,21 +121,82 @@ class SchedulerManager:
                     raise ValueError(f"函数 {func.__name__} 不在任何已加载的插件中。")
                 plugin_name = plugin.name
 
-                task_declaration = {
-                    "plugin_name": plugin_name,
+                params_model = None
+                from .job import ScheduleContext
+
+                for param in inspect.signature(func).parameters.values():
+                    if (
+                        isinstance(param.annotation, type)
+                        and issubclass(param.annotation, BaseModel)
+                        and param.annotation is not ScheduleContext
+                    ):
+                        params_model = param.annotation
+                        break
+
+                if plugin_name in self._registered_tasks:
+                    logger.warning(f"插件 '{plugin_name}' 的定时任务已被重复注册。")
+                self._registered_tasks[plugin_name] = {
                     "func": func,
-                    "group_id": group_id,
-                    "bot_id": bot_id,
-                    "trigger_type": trigger,
-                    "trigger_config": trigger_kwargs,
-                    "job_kwargs": {},
+                    "model": params_model,
                 }
+
+                job_kwargs = model_dump(default_params) if default_params else {}
+                if policy:
+                    job_kwargs["execution_policy"] = model_dump(policy)
+
+                task_declaration = ScheduledJobDeclaration(
+                    plugin_name=plugin_name,
+                    group_id=group_id,
+                    bot_id=bot_id,
+                    trigger=trigger,
+                    job_kwargs=job_kwargs,
+                )
                 self._declared_tasks.append(task_declaration)
                 logger.debug(
                     f"发现声明式定时任务 '{plugin_name}'，将在启动时进行注册。"
                 )
             except Exception as e:
                 logger.error(f"注册声明式定时任务失败: {func.__name__}, 错误: {e}")
+
+            return func
+
+        return decorator
+
+    def runtime_job(self, trigger: BaseTrigger):
+        """
+        声明一个临时的、非持久化的定时任务。
+
+        这个任务只存在于内存中，随程序重启而消失。
+        它非常适合用于插件内部的、固定的、无需用户配置的系统级定时任务。
+        被此装饰器修饰的函数依然可以享受完整的依赖注入功能。
+
+        参数:
+            trigger: 一个由 `Trigger` 工厂类创建的触发器配置对象。
+        """
+
+        def decorator(func: Callable[..., Coroutine]) -> Callable[..., Coroutine]:
+            try:
+                plugin = nonebot.get_plugin_by_module_name(func.__module__)
+                if not plugin:
+                    raise ValueError(f"函数 {func.__name__} 不在任何已加载的插件中。")
+                plugin_name = plugin.name
+
+                self._registered_tasks[f"ephemeral::{plugin_name}::{func.__name__}"] = {
+                    "func": func,
+                    "model": None,
+                }
+
+                declaration = EphemeralJobDeclaration(
+                    plugin_name=plugin_name,
+                    func=func,
+                    trigger=trigger,
+                )
+                self._ephemeral_declared_tasks.append(declaration)
+                logger.debug(
+                    f"发现临时定时任务 '{plugin_name}:{func.__name__}'，将在启动时调度"
+                )
+            except Exception as e:
+                logger.error(f"注册临时定时任务失败: {func.__name__}, 错误: {e}")
 
             return func
 
@@ -127,6 +240,39 @@ class SchedulerManager:
         """
         return list(self._registered_tasks.keys())
 
+    async def run_at(self, func: Callable[..., Coroutine], trigger: BaseTrigger) -> str:
+        """
+        【新增】在未来的某个时间点，运行一个一次性的临时任务。
+
+        这是一个编程式API，用于动态调度一个非持久化的任务。
+
+        参数:
+            func: 要执行的异步函数。
+            trigger: 一个由 `Trigger` 工廠類創建的觸發器配置對象。
+
+        返回:
+            str: 临时任务的唯一ID，可用于未来的管理（如取消）。
+        """
+        job_id = f"ephemeral_runtime_{uuid.uuid4()}"
+
+        context = ScheduleContext(
+            schedule_id=0,
+            plugin_name=f"runtime::{func.__module__}",
+            bot_id=None,
+            group_id=None,
+            job_kwargs={},
+        )
+
+        APSchedulerAdapter.add_ephemeral_job(
+            job_id=job_id,
+            func=func,
+            trigger_type=trigger.trigger_type,
+            trigger_config=model_dump(trigger, exclude={"trigger_type"}),
+            context=context,
+        )
+        logger.info(f"已动态调度一个临时任务 (ID: {job_id})，将在 {trigger} 触发。")
+        return job_id
+
     async def add_daily_task(
         self,
         plugin_name: str,
@@ -136,7 +282,7 @@ class SchedulerManager:
         second: int = 0,
         job_kwargs: dict | None = None,
         bot_id: str | None = None,
-    ) -> "ScheduleInfo | None":
+    ) -> "ScheduledJob | None":
         """
         添加每日定时任务
 
@@ -150,7 +296,7 @@ class SchedulerManager:
             bot_id: 目标Bot ID，None表示使用默认Bot。
 
         返回:
-            ScheduleInfo | None: 创建的任务信息，失败时返回None。
+            ScheduledJob | None: 创建的任务信息，失败时返回None。
         """
         trigger_config = {
             "hour": hour,
@@ -180,8 +326,21 @@ class SchedulerManager:
         start_date: str | datetime | None = None,
         job_kwargs: dict | None = None,
         bot_id: str | None = None,
-    ) -> "ScheduleInfo | None":
-        """添加间隔性定时任务"""
+    ) -> "ScheduledJob | None":
+        """
+        添加间隔性定时任务
+
+        参数:
+            plugin_name: 插件名称。
+            group_id: 目标群组ID，None表示全局任务。
+            weeks/days/hours/minutes/seconds: 间隔时间，至少指定一个。
+            start_date: 开始时间，None表示立即开始。
+            job_kwargs: 任务参数字典。
+            bot_id: 目标Bot ID。
+
+        返回:
+            ScheduledJob | None: 创建的任务信息，失败时返回None。
+        """
         trigger_config = {
             "weeks": weeks,
             "days": days,
@@ -231,11 +390,7 @@ class SchedulerManager:
 
             validated_model = model_validate(job_kwargs)
 
-            model_dump = getattr(validated_model, "model_dump", None)
-            if not model_dump:
-                return False, f"插件 '{plugin_name}' 的参数模型不支持导出"
-
-            return True, model_dump()
+            return True, model_dump(validated_model)
         except ValidationError as e:
             errors = [f"  - {err['loc'][0]}: {err['msg']}" for err in e.errors()]
             error_str = "\n".join(errors)
@@ -250,7 +405,7 @@ class SchedulerManager:
         trigger_config: dict,
         job_kwargs: dict | None = None,
         bot_id: str | None = None,
-    ) -> "ScheduleInfo | None":
+    ) -> "ScheduledJob | None":
         """
         添加定时任务（通用方法）
 
@@ -263,7 +418,7 @@ class SchedulerManager:
             bot_id: 目标Bot ID，None表示使用默认Bot。
 
         返回:
-            ScheduleInfo | None: 创建的任务信息，失败时返回None。
+            ScheduledJob | None: 创建的任务信息，失败时返回None。
         """
         if plugin_name not in self._registered_tasks:
             logger.error(f"插件 '{plugin_name}' 没有注册可用的定时任务。")
@@ -298,18 +453,12 @@ class SchedulerManager:
         )
         return schedule
 
-    async def get_all_schedules(self) -> list[ScheduleInfo]:
-        """
-        获取所有定时任务信息
-        """
-        return await self.get_schedules()
-
     async def get_schedules(
         self,
         plugin_name: str | None = None,
         group_id: str | None = None,
         bot_id: str | None = None,
-    ) -> list[ScheduleInfo]:
+    ) -> list[ScheduledJob]:
         """
         根据条件获取定时任务列表
 
@@ -319,7 +468,7 @@ class SchedulerManager:
             bot_id: Bot ID，None表示不限制。
 
         返回:
-            list[ScheduleInfo]: 符合条件的任务信息列表。
+            list[ScheduledJob]: 符合条件的任务信息列表。
         """
         return await ScheduleRepository.query_schedules(
             plugin_name=plugin_name, group_id=group_id, bot_id=bot_id
@@ -382,7 +531,15 @@ class SchedulerManager:
         return True, f"成功更新了任务 ID: {schedule_id} 的配置。"
 
     async def get_schedule_status(self, schedule_id: int) -> dict | None:
-        """获取定时任务的详细状态信息"""
+        """
+        获取定时任务的详细状态信息
+
+        参数:
+            schedule_id: 定时任务的ID。
+
+        返回:
+            dict | None: 任务详细信息字典，不存在时返回None。
+        """
         schedule = await ScheduleRepository.get_by_id(schedule_id)
         if not schedule:
             return None
@@ -408,7 +565,15 @@ class SchedulerManager:
         }
 
     async def pause_schedule(self, schedule_id: int) -> tuple[bool, str]:
-        """暂停指定的定时任务"""
+        """
+        暂停指定的定时任务
+
+        参数:
+            schedule_id: 要暂停的定时任务ID。
+
+        返回:
+            tuple[bool, str]: (是否成功, 操作结果消息)。
+        """
         schedule = await ScheduleRepository.get_by_id(schedule_id)
         if not schedule or not schedule.is_enabled:
             return False, "任务不存在或已暂停。"
@@ -419,7 +584,15 @@ class SchedulerManager:
         return True, f"已暂停任务 (ID: {schedule.id})。"
 
     async def resume_schedule(self, schedule_id: int) -> tuple[bool, str]:
-        """恢复指定的定时任务"""
+        """
+        恢复指定的定时任务
+
+        参数:
+            schedule_id: 要恢复的定时任务ID。
+
+        返回:
+            tuple[bool, str]: (是否成功, 操作结果消息)。
+        """
         schedule = await ScheduleRepository.get_by_id(schedule_id)
         if not schedule or schedule.is_enabled:
             return False, "任务不存在或已启用。"
@@ -430,7 +603,15 @@ class SchedulerManager:
         return True, f"已恢复任务 (ID: {schedule.id})。"
 
     async def trigger_now(self, schedule_id: int) -> tuple[bool, str]:
-        """立即手动触发指定的定时任务"""
+        """
+        立即手动触发指定的定时任务
+
+        参数:
+            schedule_id: 要触发的定时任务ID。
+
+        返回:
+            tuple[bool, str]: (是否成功, 操作结果消息)。
+        """
         schedule = await ScheduleRepository.get_by_id(schedule_id)
         if not schedule:
             return False, f"未找到 ID 为 {schedule_id} 的定时任务。"
@@ -446,3 +627,4 @@ class SchedulerManager:
 
 
 scheduler_manager = SchedulerManager()
+scheduler = scheduler_manager
