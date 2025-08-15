@@ -2,17 +2,13 @@ from nonebot.plugin import PluginMetadata
 from nonebot_plugin_alconna import Alconna, Arparma, on_alconna
 from nonebot_plugin_session import EventSession
 
-from zhenxun.configs.config import Config
-from zhenxun.configs.utils import PluginExtraData, RegisterConfig
+from zhenxun.configs.utils import PluginExtraData
+from zhenxun.services.help_service import create_plugin_help_image
 from zhenxun.services.log import logger
 from zhenxun.utils.enum import PluginType
 from zhenxun.utils.exception import EmptyError
 from zhenxun.utils.message import MessageUtils
 from zhenxun.utils.rules import admin_check, ensure_group
-
-from .config import ADMIN_HELP_IMAGE
-from .html_help import build_html_help
-from .normal_help import build_help
 
 __plugin_meta__ = PluginMetadata(
     name="群组管理员帮助",
@@ -30,16 +26,18 @@ __plugin_meta__ = PluginMetadata(
         precautions=[
             "只有群主/群管理 才能使用哦，群主拥有6级权限，管理员拥有5级权限！"
         ],
-        configs=[
-            RegisterConfig(
-                key="type",
-                value="zhenxun",
-                help="管理员帮助样式，normal, zhenxun",
-                default_value="zhenxun",
-            )
-        ],
+        configs=[],
     ).to_dict(),
 )
+
+
+async def build_html_help() -> bytes:
+    """构建管理员帮助图片"""
+    return await create_plugin_help_image(
+        plugin_types=[PluginType.ADMIN, PluginType.SUPER_AND_ADMIN],
+        page_title="群管理员帮助手册",
+    )
+
 
 _matcher = on_alconna(
     Alconna("管理员帮助"),
@@ -54,15 +52,9 @@ async def _(
     session: EventSession,
     arparma: Arparma,
 ):
-    if not ADMIN_HELP_IMAGE.exists():
-        try:
-            if Config.get_config("admin_help", "type") == "zhenxun":
-                await build_html_help()
-            else:
-                await build_help()
-        except EmptyError:
-            await MessageUtils.build_message("当前管理员帮助为空...").finish(
-                reply_to=True
-            )
-    await MessageUtils.build_message(ADMIN_HELP_IMAGE).send()
+    try:
+        image_bytes = await build_html_help()
+        await MessageUtils.build_message(image_bytes).send()
+    except EmptyError:
+        await MessageUtils.build_message("当前管理员帮助为空...").finish(reply_to=True)
     logger.info("查看管理员帮助", arparma.header_result, session=session)

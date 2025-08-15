@@ -15,7 +15,9 @@ DATA_PATH = Path() / "data"
 # 临时数据路径
 TEMP_PATH = Path() / "resources" / "temp"
 # 网页模板路径
-TEMPLATE_PATH = Path() / "resources" / "template"
+THEMES_PATH = Path() / "resources" / "themes"
+# [新增] UI渲染服务的统一缓存路径
+UI_CACHE_PATH = TEMP_PATH / "ui_cache"
 
 
 IMAGE_PATH.mkdir(parents=True, exist_ok=True)
@@ -25,3 +27,4 @@ LOG_PATH.mkdir(parents=True, exist_ok=True)
 FONT_PATH.mkdir(parents=True, exist_ok=True)
 DATA_PATH.mkdir(parents=True, exist_ok=True)
 TEMP_PATH.mkdir(parents=True, exist_ok=True)
+UI_CACHE_PATH.mkdir(parents=True, exist_ok=True)

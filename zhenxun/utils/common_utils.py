@@ -1,3 +1,4 @@
+import re
 from typing import overload
 
 from nonebot.adapters import Bot
@@ -120,3 +121,17 @@ class SqlUtils:
         if not_null:
             sql += " NOT NULL"
         return sql
+
+
+def format_usage_for_markdown(text: str) -> str:
+    """
+    智能地将Python多行字符串转换为适合Markdown渲染的格式。
+    - 将单个换行符替换为Markdown的硬换行（行尾加两个空格）。
+    - 保留两个或更多的连续换行符，使其成为Markdown的段落分隔。
+    """
+    if not text:
+        return ""
+    text = re.sub(r"\n{2,}", "<<PARAGRAPH_BREAK>>", text)
+    text = text.replace("\n", "  \n")
+    text = text.replace("<<PARAGRAPH_BREAK>>", "\n\n")
+    return text

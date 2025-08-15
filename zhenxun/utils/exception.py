@@ -98,3 +98,11 @@ class AllURIsFailedError(Exception):
             for url, exc in zip(self.urls, self.exceptions)
         )
         return f"All {len(self.urls)} URIs failed:\n{exc_info}"
+
+
+class RenderingError(Exception):
+    """
+    在渲染服务无法生成图片时抛出。
+    """
+
+    pass

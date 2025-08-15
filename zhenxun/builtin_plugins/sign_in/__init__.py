@@ -84,12 +84,6 @@ __plugin_meta__ = PluginMetadata(
                 default_value=0.05,
                 type=float,
             ),
-            RegisterConfig(
-                key="IMAGE_STYLE",
-                value="zhenxun",
-                help="签到图片样式, [normal, zhenxun]",
-                default_value="zhenxun",
-            ),
         ],
         limits=[PluginCdBlock()],
     ).to_dict(),

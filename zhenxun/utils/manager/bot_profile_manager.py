@@ -1,30 +1,25 @@
 import asyncio
-import os
 from pathlib import Path
 from typing import ClassVar
 
 import aiofiles
 import nonebot
-from nonebot.compat import model_dump
-from nonebot_plugin_htmlrender import template_to_pic
 from pydantic import BaseModel
 
 from zhenxun.configs.config import BotConfig, Config
-from zhenxun.configs.path_config import DATA_PATH, TEMPLATE_PATH
+from zhenxun.configs.path_config import DATA_PATH
 from zhenxun.configs.utils.models import PluginExtraData
 from zhenxun.models.statistics import Statistics
 from zhenxun.models.user_console import UserConsole
+from zhenxun.services import renderer_service
 from zhenxun.services.log import logger
-from zhenxun.utils._build_image import BuildImage
 from zhenxun.utils.platform import PlatformUtils
+from zhenxun.utils.pydantic_compat import model_dump
 
 DIR_PATH = DATA_PATH / "bot_profile"
 
 PROFILE_PATH = DIR_PATH / "profile"
 PROFILE_PATH.mkdir(parents=True, exist_ok=True)
-
-PROFILE_IMAGE_PATH = DIR_PATH / "image"
-PROFILE_IMAGE_PATH.mkdir(parents=True, exist_ok=True)
 
 
 Config.add_plugin_config(
@@ -66,17 +61,12 @@ class BotProfileManager:
 
     @classmethod
     def clear_profile_image(cls, bot_id: str | None = None):
-        """清除BOT自我介绍图片"""
+        """清除BOT自我介绍的内存缓存"""
         if bot_id:
-            file_path = PROFILE_IMAGE_PATH / f"{bot_id}.png"
-            if file_path.exists():
-                file_path.unlink()
+            if bot_id in cls._bot_data:
+                del cls._bot_data[bot_id]
         else:
-            for f in os.listdir(PROFILE_IMAGE_PATH):
-                _f = PROFILE_IMAGE_PATH / f
-                if _f.is_file():
-                    _f.unlink()
-        cls._bot_data.clear()
+            cls._bot_data.clear()
 
     @classmethod
     async def _read_profile(cls, bot_id: str):
@@ -147,11 +137,8 @@ class BotProfileManager:
     @classmethod
     async def build_bot_profile_image(
         cls, bot_id: str, tags: list[dict[str, str]] | None = None
-    ) -> Path | None:
+    ) -> bytes | None:
         """构建BOT自我介绍图片"""
-        file_path = PROFILE_IMAGE_PATH / f"{bot_id}.png"
-        if file_path.exists():
-            return file_path
         profile, service_count, call_count = await asyncio.gather(
             cls.get_bot_profile(bot_id),
             UserConsole.get_new_uid(),
@@ -164,28 +151,19 @@ class BotProfileManager:
                 {"text": f"服务人数: {service_count}", "color": "#5e92e0"},
                 {"text": f"调用次数: {call_count}", "color": "#31e074"},
             ]
-        image_bytes = await template_to_pic(
-            template_path=str((TEMPLATE_PATH / "bot_profile").absolute()),
-            template_name="main.html",
-            templates={
-                "avatar": str(profile.avatar.absolute()) if profile.avatar else None,
-                "bot_name": profile.name,
-                "bot_description": profile.introduction,
-                "service_count": service_count,
-                "call_count": call_count,
-                "plugin_list": cls.get_plugin_profile(),
-                "tags": tags,
-                "title": f"{BotConfig.self_nickname}简介",
-            },
-            pages={
-                "viewport": {"width": 1077, "height": 1000},
-                "base_url": f"file://{TEMPLATE_PATH}",
-            },
-            wait=2,
+        profile_data = {
+            "avatar": profile.avatar.absolute().as_uri() if profile.avatar else None,
+            "bot_name": profile.name,
+            "bot_description": profile.introduction,
+            "service_count": service_count,
+            "call_count": call_count,
+            "plugin_list": cls.get_plugin_profile(),
+            "tags": tags,
+            "title": f"{BotConfig.self_nickname}简介",
+        }
+        return await renderer_service.render(
+            "pages/builtin/bot_profile", data=profile_data
         )
-        image = BuildImage.open(image_bytes)
-        await image.save(file_path)
-        return file_path
 
 
 BotProfileManager.clear_profile_image()

@@ -1,5 +1,5 @@
 from zhenxun.configs.config import Config
-from zhenxun.configs.path_config import IMAGE_PATH, TEMPLATE_PATH
+from zhenxun.configs.path_config import IMAGE_PATH, THEMES_PATH
 
 base_config = Config.get("shop")
 
@@ -17,4 +17,4 @@ PLATFORM_PATH = {
 
 LEFT_RIGHT_IMAGE = ["1.png", "2.png", "qq.png"]
 
-LEFT_RIGHT_PATH = TEMPLATE_PATH / "shop" / "res" / "img"
+LEFT_RIGHT_PATH = THEMES_PATH / "default" / "assets" / "shop" / "img"

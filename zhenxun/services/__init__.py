@@ -43,6 +43,7 @@ from .llm import (
 )
 from .log import logger
 from .plugin_init import PluginInit, PluginInitManager
+from .renderer import renderer_service
 from .scheduler import scheduler_manager
 
 __all__ = [
@@ -69,6 +70,7 @@ __all__ = [
     "list_available_models",
     "list_embedding_models",
     "logger",
+    "renderer_service",
     "scheduler_manager",
     "search",
     "set_global_default_model_name",

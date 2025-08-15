@@ -1,4 +1,5 @@
 import asyncio
+from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime, timedelta
 import inspect
@@ -7,26 +8,26 @@ from types import MappingProxyType
 from typing import Any, Literal
 
 from nonebot.adapters import Bot, Event
-from nonebot.compat import model_dump
 from nonebot_plugin_alconna import At, UniMessage, UniMsg
 from nonebot_plugin_uninfo import Uninfo
 from pydantic import BaseModel, Field, create_model
 from tortoise.expressions import Q
 
+from zhenxun.configs.config import BotConfig
 from zhenxun.models.friend_user import FriendUser
 from zhenxun.models.goods_info import GoodsInfo
 from zhenxun.models.group_member_info import GroupInfoUser
 from zhenxun.models.user_console import UserConsole
 from zhenxun.models.user_gold_log import UserGoldLog
 from zhenxun.models.user_props_log import UserPropsLog
+from zhenxun.services import renderer_service
 from zhenxun.services.log import logger
 from zhenxun.utils.enum import GoldHandle, PropHandle
 from zhenxun.utils.image_utils import BuildImage, ImageTemplate
 from zhenxun.utils.platform import PlatformUtils
+from zhenxun.utils.pydantic_compat import model_dump
 
-from .config import ICON_PATH, PLATFORM_PATH, base_config
-from .html_image import html_image
-from .normal_image import normal_image
+from .config import ICON_PATH, PLATFORM_PATH
 
 
 class Goods(BaseModel):
@@ -150,9 +151,7 @@ class ShopManage:
 
     @classmethod
     async def get_shop_image(cls) -> bytes:
-        if base_config.get("style") == "zhenxun":
-            return await html_image()
-        return await normal_image()
+        return await prepare_shop_data()
 
     @classmethod
     def __build_params(
@@ -565,3 +564,62 @@ class ShopManage:
         """
         user = await UserConsole.get_user(user_id, platform)
         return user.gold
+
+
+def get_limit_time(end_time: int) -> str | None:
+    now = int(time.time())
+    if now > end_time or end_time == 0:
+        return None
+    time_difference = datetime.fromtimestamp(end_time) - datetime.fromtimestamp(now)
+    total_seconds = time_difference.total_seconds()
+    hours = int(total_seconds // 3600)
+    minutes = int((total_seconds % 3600) // 60)
+    return f"{hours}:{minutes:02d}"
+
+
+def get_discount(price: int, discount: float) -> int | None:
+    return None if discount == 1.0 else int(price * discount)
+
+
+async def prepare_shop_data() -> bytes:
+    """准备商店数据并调用渲染服务"""
+    goods_list = (
+        await GoodsInfo.filter(
+            Q(goods_limit_time__gte=time.time()) | Q(goods_limit_time=0)
+        )
+        .annotate()
+        .order_by("id")
+        .all()
+    )
+
+    partition_dict: dict[str, list[dict]] = defaultdict(list)
+    for idx, goods in enumerate(goods_list):
+        partition_name = goods.partition or "默认分区"
+
+        icon_asset_path = None
+        if goods.icon and (ICON_PATH / goods.icon).exists():
+            icon_asset_path = f"image/shop_icon/{goods.icon}"
+
+        goods_item = {
+            "id": idx + 1,
+            "name": goods.goods_name,
+            "description": goods.goods_description,
+            "price": goods.goods_price,
+            "discount_price": get_discount(goods.goods_price, goods.goods_discount),
+            "limit_time": get_limit_time(goods.goods_limit_time),
+            "daily_limit": goods.daily_limit or "∞",
+            "icon_url": icon_asset_path,
+        }
+        partition_dict[partition_name].append(goods_item)
+
+    categories = [
+        {"partition_title": partition, "goods_list": items}
+        for partition, items in partition_dict.items()
+    ]
+
+    shop_data = {
+        "bot_nickname": BotConfig.self_nickname,
+        "categories": categories,
+    }
+
+    return await renderer_service.render("pages/builtin/shop", data=shop_data)

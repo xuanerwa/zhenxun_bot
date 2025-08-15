@@ -1,12 +1,6 @@
 from zhenxun.configs.path_config import IMAGE_PATH
 
-SIGN_RESOURCE_PATH = IMAGE_PATH / "sign" / "sign_res"
 SIGN_TODAY_CARD_PATH = IMAGE_PATH / "sign" / "today_card"
-SIGN_BORDER_PATH = SIGN_RESOURCE_PATH / "border"
-SIGN_BACKGROUND_PATH = SIGN_RESOURCE_PATH / "background"
-
-SIGN_BORDER_PATH.mkdir(exist_ok=True, parents=True)
-SIGN_BACKGROUND_PATH.mkdir(exist_ok=True, parents=True)
 
 
 lik2relation = {

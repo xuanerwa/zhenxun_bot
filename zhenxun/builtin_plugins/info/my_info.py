@@ -1,17 +1,16 @@
 from datetime import datetime, timedelta
 import random
 
-from nonebot_plugin_htmlrender import template_to_pic
 from nonebot_plugin_uninfo import Uninfo
 from tortoise.expressions import RawSQL
 from tortoise.functions import Count
 
-from zhenxun.configs.path_config import TEMPLATE_PATH
 from zhenxun.models.chat_history import ChatHistory
 from zhenxun.models.level_user import LevelUser
 from zhenxun.models.sign_user import SignUser
 from zhenxun.models.statistics import Statistics
 from zhenxun.models.user_console import UserConsole
+from zhenxun.services import renderer_service
 from zhenxun.utils.platform import PlatformUtils
 
 RACE = [
@@ -90,7 +89,7 @@ def get_level(impression: float) -> int:
 
 async def get_chat_history(
     user_id: str, group_id: str | None
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[int]]:
     """获取用户聊天记录
 
     参数:
@@ -98,11 +97,11 @@ async def get_chat_history(
         group_id: 群id
 
     返回:
-        tuple[list[str], list[str]]: 日期列表, 次数列表
+        tuple[list[str], list[int]]: 日期列表, 次数列表
 
     """
     now = datetime.now()
-    filter_date = now - timedelta(days=7, hours=now.hour, minutes=now.minute)
+    filter_date = now - timedelta(days=7)
     date_list = (
         await ChatHistory.filter(
             user_id=user_id, group_id=group_id, create_time__gte=filter_date
@@ -111,19 +110,15 @@ async def get_chat_history(
         .group_by("date")
         .values("date", "count")
     )
-    chart_date = []
-    count_list = []
-    date2cnt = {str(date["date"]): date["count"] for date in date_list}
-    date = now.date()
+    chart_date: list[str] = []
+    count_list: list[int] = []
+    date2cnt = {str(item["date"]): item["count"] for item in date_list}
+    current_date = now.date()
     for _ in range(7):
-        if str(date) in date2cnt:
-            count_list.append(date2cnt[str(date)])
-        else:
-            count_list.append(0)
-        chart_date.append(str(date))
-        date -= timedelta(days=1)
-    for c in chart_date:
-        chart_date[chart_date.index(c)] = c[5:]
+        date_str = str(current_date)
+        count_list.append(date2cnt.get(date_str, 0))
+        chart_date.append(date_str[5:])
+        current_date -= timedelta(days=1)
     chart_date.reverse()
     count_list.reverse()
     return chart_date, count_list
@@ -136,7 +131,6 @@ async def get_user_info(
 
     参数:
         session: Uninfo
-        bot: Bot
         user_id: 用户id
         group_id: 群id
         nickname: 用户昵称
@@ -145,50 +139,63 @@ async def get_user_info(
         bytes: 图片数据
     """
     platform = PlatformUtils.get_platform(session) or "qq"
-    ava_url = PlatformUtils.get_user_avatar_url(user_id, platform, session.self_id)
+    avatar_url = (
+        PlatformUtils.get_user_avatar_url(user_id, platform, session.self_id) or ""
+    )
+
     user = await UserConsole.get_user(user_id, platform)
-    level = await LevelUser.get_user_level(user_id, group_id)
+    permission_level = await LevelUser.get_user_level(user_id, group_id)
+
     sign_level = 0
     if sign_user := await SignUser.get_or_none(user_id=user_id):
         sign_level = get_level(float(sign_user.impression))
+
     chat_count = await ChatHistory.filter(user_id=user_id, group_id=group_id).count()
     stat_count = await Statistics.filter(user_id=user_id, group_id=group_id).count()
-    select_index = ["" for _ in range(9)]
-    select_index[sign_level] = "select"
+
+    selected_indices = [""] * 9
+    selected_indices[sign_level] = "select"
+
     uid = f"{user.uid}".rjust(8, "0")
-    uid = f"{uid[:4]} {uid[4:]}"
+    uid_formatted = f"{uid[:4]} {uid[4:]}"
+
     now = datetime.now()
-    weather = "moon" if now.hour < 6 or now.hour > 19 else "sun"
-    chart_date, count_list = await get_chat_history(user_id, group_id)
-    data = {
-        "date": now.date(),
-        "weather": weather,
-        "ava_url": ava_url,
-        "nickname": nickname,
-        "title": "勇 者",
-        "race": random.choice(RACE),
-        "sex": random.choice(SEX),
-        "occ": random.choice(OCC),
-        "uid": uid,
-        "description": "这是一个传奇的故事，"
-        "人类的赞歌是勇气的赞歌,人类的伟大是勇气的伟译。",
-        "sign_level": sign_level,
-        "level": level,
-        "gold": user.gold,
-        "prop": len(user.props),
-        "call": stat_count,
-        "say": chat_count,
-        "select_index": select_index,
-        "chart_date": chart_date,
-        "count_list": count_list,
-    }
-    return await template_to_pic(
-        template_path=str((TEMPLATE_PATH / "my_info").absolute()),
-        template_name="main.html",
-        templates={"data": data},
-        pages={
-            "viewport": {"width": 1754, "height": 1240},
-            "base_url": f"file://{TEMPLATE_PATH}",
+    weather_icon_name = "moon" if now.hour < 6 or now.hour > 19 else "sun"
+
+    chart_labels, chart_data = await get_chat_history(user_id, group_id)
+
+    profile_data = {
+        "page": {
+            "date": str(now.date()),
+            "weather_icon_name": weather_icon_name,
         },
-        wait=2,
-    )
+        "info": {
+            "avatar_url": avatar_url,
+            "nickname": nickname,
+            "title": "勇 者",
+            "race": random.choice(RACE),
+            "sex": random.choice(SEX),
+            "occupation": random.choice(OCC),
+            "uid": uid_formatted,
+            "description": (
+                "这是一个传奇的故事,人类的赞歌是勇气的赞歌,人类的伟大是勇气的伟大"
+            ),
+        },
+        "stats": {
+            "gold": user.gold,
+            "prop_count": len(user.props),
+            "call_count": stat_count,
+            "chat_count": chat_count,
+        },
+        "favorability": {
+            "level": sign_level,
+            "selected_indices": selected_indices,
+        },
+        "permission_level": permission_level,
+        "chart": {
+            "labels": chart_labels,
+            "data": chart_data,
+        },
+    }
+
+    return await renderer_service.render("pages/builtin/my_info", data=profile_data)

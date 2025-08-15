@@ -2,13 +2,11 @@ import asyncio
 from datetime import datetime, timedelta
 import random
 
-from nonebot_plugin_htmlrender import template_to_pic
 from nonebot_plugin_uninfo import Uninfo
 from tortoise.expressions import RawSQL
 from tortoise.functions import Count, Sum
 
 from zhenxun.configs.config import Config
-from zhenxun.configs.path_config import TEMPLATE_PATH
 from zhenxun.models.mahiro_bank import MahiroBank
 from zhenxun.models.mahiro_bank_log import MahiroBankLog
 from zhenxun.models.sign_user import SignUser
@@ -158,15 +156,15 @@ class BankManager:
         )
 
     @classmethod
-    async def get_user_info(cls, session: Uninfo, uname: str) -> bytes:
-        """获取用户数据
+    async def get_user_info_data(cls, session: Uninfo, uname: str) -> dict:
+        """获取用户数据（返回字典）
 
         参数:
             session: Uninfo
             uname: 用户id
 
         返回:
-            bytes: 图片数据
+            dict: 用户银行数据字典
         """
         user_id = session.user.id
         user = await cls.get_user(user_id=user_id)
@@ -199,9 +197,9 @@ class BankManager:
         deposit_list = [
             {
                 "id": deposit.id,
-                "date": now.date(),
+                "date": str(now.date()),
                 "start_time": str(deposit.create_time).split(".")[0],
-                "end_time": end_time.replace(microsecond=0),
+                "end_time": str(end_time.replace(microsecond=0)),
                 "amount": deposit.amount,
                 "rate": f"{deposit.rate * 100:.2f}",
                 "projected_revenue": int(
@@ -212,12 +210,13 @@ class BankManager:
             for deposit in user_today_deposit
         ]
         platform = PlatformUtils.get_platform(session)
-        data = {
+        avatar_url = PlatformUtils.get_user_avatar_url(
+            user_id, platform, session.self_id
+        )
+        return {
             "name": uname,
             "rank": rank + 1,
-            "avatar_url": PlatformUtils.get_user_avatar_url(
-                user_id, platform, session.self_id
-            ),
+            "avatar_url": avatar_url or "",
             "amount": user.amount,
             "deposit_count": deposit_count,
             "today_deposit_count": len(user_today_deposit),
@@ -225,21 +224,16 @@ class BankManager:
             "projected_revenue": projected_revenue,
             "today_deposit_amount": today_deposit_amount,
             "deposit_list": deposit_list,
-            "create_time": now.replace(microsecond=0),
+            "create_time": str(now.replace(microsecond=0)),
         }
-        return await template_to_pic(
-            template_path=str((TEMPLATE_PATH / "mahiro_bank").absolute()),
-            template_name="user.html",
-            templates={"data": data},
-            pages={
-                "viewport": {"width": 386, "height": 700},
-                "base_url": f"file://{TEMPLATE_PATH}",
-            },
-            wait=2,
-        )
 
     @classmethod
-    async def get_bank_info(cls) -> bytes:
+    async def get_bank_info_data(cls) -> dict:
+        """获取银行总览数据（返回字典）
+
+        返回:
+            dict: 银行总览数据字典
+        """
         now = datetime.now()
         now_start = now - timedelta(
             hours=now.hour, minutes=now.minute, seconds=now.second
@@ -293,27 +287,17 @@ class BankManager:
         if lasted_log:
             date = now.date() - lasted_log.create_time.date()
             date = (date.days or 1) + 1
-        data = {
-            "amount_sum": bank_data[0]["amount_sum"],
-            "user_count": bank_data[0]["user_count"],
+        return {
+            "amount_sum": bank_data[0]["amount_sum"] or 0,
+            "user_count": bank_data[0]["user_count"] or 0,
             "today_count": today_count,
-            "day_amount": int(bank_data[0]["amount_sum"] / date),
+            "day_amount": int((bank_data[0]["amount_sum"] or 0) / date),
             "interest_amount": interest_amount[0]["amount_sum"] or 0,
             "active_user_count": active_user_count[0]["count"] or 0,
             "e_data": e_date,
             "e_amount": e_amount,
-            "create_time": now.replace(microsecond=0),
+            "create_time": str(now.replace(microsecond=0)),
         }
-        return await template_to_pic(
-            template_path=str((TEMPLATE_PATH / "mahiro_bank").absolute()),
-            template_name="bank.html",
-            templates={"data": data},
-            pages={
-                "viewport": {"width": 450, "height": 750},
-                "base_url": f"file://{TEMPLATE_PATH}",
-            },
-            wait=2,
-        )
 
     @classmethod
     async def deposit(
@@ -406,7 +390,6 @@ class BankManager:
             bank_data[log.user_id].append(log)
         log_create_list = []
         log_update_list = []
-        # 计算每日默认金币
         for bank_user in bank_user_list:
             if user := user_data.get(bank_user.user_id):
                 amount = bank_user.amount
@@ -414,7 +397,6 @@ class BankManager:
                     amount -= sum(log.amount for log in logs)
                 if not amount:
                     continue
-                # 计算每日默认金币
                 gold = int(amount * bank_user.rate)
                 user.gold += gold
                 log_create_list.append(
@@ -426,7 +408,6 @@ class BankManager:
                         is_completed=True,
                     )
                 )
-        # 计算每日存款金币
         for user_id, logs in bank_data.items():
             if user := user_data.get(user_id):
                 for log in logs:

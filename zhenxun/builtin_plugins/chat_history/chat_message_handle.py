@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta
-from io import BytesIO
 
 from nonebot.plugin import PluginMetadata
 from nonebot_plugin_alconna import (
@@ -20,8 +19,9 @@ from zhenxun.configs.utils import Command, PluginExtraData, RegisterConfig
 from zhenxun.models.chat_history import ChatHistory
 from zhenxun.models.group_member_info import GroupInfoUser
 from zhenxun.services.log import logger
+from zhenxun.ui import TableBuilder
+from zhenxun.ui.models import ImageCell, TextCell
 from zhenxun.utils.enum import PluginType
-from zhenxun.utils.image_utils import BuildImage, ImageTemplate
 from zhenxun.utils.message import MessageUtils
 from zhenxun.utils.platform import PlatformUtils
 
@@ -123,64 +123,61 @@ async def _(
     if rank_data := await ChatHistory.get_group_msg_rank(
         group_id, fetch_count, "DES" if arparma.find("des") else "DESC", date_scope
     ):
-        idx = 1
-        data_list = []
+        rows_data = []
+        platform = "qq"
 
-        for uid, num in rank_data:
-            if len(data_list) >= count.result:
+        user_ids_in_rank = [str(uid) for uid, _ in rank_data]
+        users_in_group_query = GroupInfoUser.filter(
+            user_id__in=user_ids_in_rank, group_id=group_id
+        )
+        users_in_group = {u.user_id: u for u in await users_in_group_query}
+
+        for idx, (uid, num) in enumerate(rank_data):
+            if len(rows_data) >= count.result:
                 break
 
-            user_in_group = await GroupInfoUser.filter(
-                user_id=uid, group_id=group_id
-            ).first()
+            uid_str = str(uid)
+            user_in_group = users_in_group.get(uid_str)
 
             if not user_in_group and not show_quit_member:
                 continue
 
-            if user_in_group:
-                user_name = user_in_group.user_name
-            else:
-                user_name = f"{uid}(已退群)"
+            user_name = (
+                user_in_group.user_name if user_in_group else f"{uid_str}(已退群)"
+            )
 
-            avatar_size = 40
-            try:
-                avatar_bytes = await PlatformUtils.get_user_avatar(str(uid), "qq")
-                if avatar_bytes:
-                    avatar_img = BuildImage(
-                        avatar_size, avatar_size, background=BytesIO(avatar_bytes)
-                    )
-                    await avatar_img.circle()
-                    avatar_tuple = (avatar_img, avatar_size, avatar_size)
-                else:
-                    avatar_img = BuildImage(avatar_size, avatar_size, color="#CCCCCC")
-                    await avatar_img.circle()
-                    avatar_tuple = (avatar_img, avatar_size, avatar_size)
-            except Exception as e:
-                logger.warning(f"获取用户头像失败: {e}", "chat_history")
-                avatar_img = BuildImage(avatar_size, avatar_size, color="#CCCCCC")
-                await avatar_img.circle()
-                avatar_tuple = (avatar_img, avatar_size, avatar_size)
+            avatar_url = PlatformUtils.get_user_avatar_url(uid_str, platform)
 
-            data_list.append([idx, avatar_tuple, user_name, num])
-            idx += 1
+            rows_data.append(
+                [
+                    TextCell(content=str(len(rows_data) + 1)),
+                    ImageCell(src=avatar_url or "", shape="circle"),
+                    TextCell(content=user_name),
+                    TextCell(content=str(num), bold=True),
+                ]
+            )
         if not date_scope:
-            if date_scope := await ChatHistory.get_group_first_msg_datetime(group_id):
-                date_scope = date_scope.astimezone(
+            first_msg_time = await ChatHistory.get_group_first_msg_datetime(group_id)
+            if first_msg_time:
+                date_scope_start = first_msg_time.astimezone(
                     pytz.timezone("Asia/Shanghai")
                 ).replace(microsecond=0)
+                date_str = f"{str(date_scope_start).split('+')[0]} - 至今"
             else:
-                date_scope = time_now.replace(microsecond=0)
-            date_str = f"{str(date_scope).split('+')[0]} - 至今"
+                date_str = f"{time_now.replace(microsecond=0)} - 至今"
         else:
             date_str = (
                 f"{date_scope[0].replace(microsecond=0)} - "
                 f"{date_scope[1].replace(microsecond=0)}"
             )
-        A = await ImageTemplate.table_page(
-            f"消息排行({count.result})", date_str, column_name, data_list
-        )
+
+        builder = TableBuilder(f"消息排行({count.result})", date_str)
+        builder.set_headers(column_name).add_rows(rows_data)
+
+        image_bytes = await builder.build()
+
         logger.info(
             f"查看消息排行 数量={count.result}", arparma.header_result, session=session
         )
-        await MessageUtils.build_message(A).finish(reply_to=True)
+        await MessageUtils.build_message(image_bytes).finish(reply_to=True)
     await MessageUtils.build_message("群组消息记录为空...").finish()

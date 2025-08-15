@@ -65,9 +65,11 @@ def init_mocker(mocker: MockerFixture, tmp_path: Path):
     mock_platform = mocker.patch("zhenxun.builtin_plugins.check.data_source.platform")
     mock_platform.uname.return_value = platform_uname
 
-    mock_template_to_pic = mocker.patch("zhenxun.builtin_plugins.check.template_to_pic")
-    mock_template_to_pic_return = mocker.AsyncMock()
-    mock_template_to_pic.return_value = mock_template_to_pic_return
+    mock_render_service = mocker.patch(
+        "zhenxun.builtin_plugins.check.renderer_service.render"
+    )
+    mock_render_service_return = mocker.AsyncMock()
+    mock_render_service.return_value = mock_render_service_return
 
     mock_build_message = mocker.patch(
         "zhenxun.builtin_plugins.check.MessageUtils.build_message"
@@ -75,19 +77,14 @@ def init_mocker(mocker: MockerFixture, tmp_path: Path):
     mock_build_message_return = mocker.AsyncMock()
     mock_build_message.return_value = mock_build_message_return
 
-    mock_template_path_new = tmp_path / "resources" / "template"
-    mocker.patch(
-        "zhenxun.builtin_plugins.check.TEMPLATE_PATH", new=mock_template_path_new
-    )
     return (
         mock_psutil,
         mock_cpuinfo,
         mock_platform,
-        mock_template_to_pic,
-        mock_template_to_pic_return,
+        mock_render_service,
+        mock_render_service_return,
         mock_build_message,
         mock_build_message_return,
-        mock_template_path_new,
     )
 
 
@@ -107,11 +104,10 @@ async def test_check(
         mock_psutil,
         mock_cpuinfo,
         mock_platform,
-        mock_template_to_pic,
-        mock_template_to_pic_return,
+        mock_render_service,
+        mock_render_service_return,
         mock_build_message,
         mock_build_message_return,
-        mock_template_path_new,
     ) = init_mocker(mocker, tmp_path)
     async with app.test_matcher(_self_check_matcher) as ctx:
         bot = create_bot(ctx)
@@ -128,8 +124,8 @@ async def test_check(
         ctx.receive_event(bot=bot, event=event)
         ctx.should_ignore_rule(_self_check_matcher)
 
-    mock_template_to_pic.assert_awaited_once()
-    mock_build_message.assert_called_once_with(mock_template_to_pic_return)
+    mock_render_service.assert_awaited_once()
+    mock_build_message.assert_called_once_with(mock_render_service_return)
     mock_build_message_return.send.assert_awaited_once()
 
 
@@ -164,11 +160,10 @@ async def test_check_arm(
         mock_psutil,
         mock_cpuinfo,
         mock_platform,
-        mock_template_to_pic,
-        mock_template_to_pic_return,
+        mock_render_service,
+        mock_render_service_return,
         mock_build_message,
         mock_build_message_return,
-        mock_template_path_new,
     ) = init_mocker(mocker, tmp_path)
 
     mock_platform.uname.return_value = platform_uname_arm
@@ -202,6 +197,6 @@ async def test_check_arm(
             mocker.call().decode().split().__getitem__().__float__(),
         ]  # type: ignore
     )
-    mock_template_to_pic.assert_awaited_once()
-    mock_build_message.assert_called_once_with(mock_template_to_pic_return)
+    mock_render_service.assert_awaited_once()
+    mock_build_message.assert_called_once_with(mock_render_service_return)
     mock_build_message_return.send.assert_awaited_once()
