@@ -7,7 +7,6 @@ from zhenxun.models.statistics import Statistics
 from zhenxun.utils.echart_utils import ChartUtils
 from zhenxun.utils.echart_utils.models import Barh
 from zhenxun.utils.enum import PluginType
-from zhenxun.utils.image_utils import BuildImage
 from zhenxun.utils.time_utils import TimeUtils
 
 
@@ -60,7 +59,7 @@ class StatisticsManage:
     @classmethod
     async def get_global_statistics(
         cls, plugin_name: str | None, day: int | None, title: str
-    ) -> BuildImage | str:
+    ) -> bytes | str:
         query = Statistics
         if plugin_name:
             query = query.filter(plugin_name=plugin_name)
@@ -114,7 +113,7 @@ class StatisticsManage:
         )
 
     @classmethod
-    async def __build_image(cls, data_list: list[tuple[str, int]], title: str):
+    async def __build_image(cls, data_list: list[tuple[str, int]], title: str) -> bytes:
         module2count = {x[0]: x[1] for x in data_list}
         plugin_info = await PluginInfo.filter(
             module__in=module2count.keys(),

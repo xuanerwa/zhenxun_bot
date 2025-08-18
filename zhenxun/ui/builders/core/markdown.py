@@ -140,10 +140,12 @@ class MarkdownBuilder(BaseBuilder[MarkdownData]):
         self._append_element(RawHtmlElement(html="---"))
         return self
 
-    async def build(self, use_cache: bool = False, **render_options) -> bytes:
-        """构建Markdown图片"""
+    def build(self) -> MarkdownData:
+        """
+        构建并返回 MarkdownData 模型实例。
+        """
         final_markdown = "\n\n".join(part.to_markdown() for part in self._parts).strip()
         self._data.markdown = final_markdown
         self._data.width = self._width
         self._data.css_path = self._css_path
-        return await super().build(use_cache=use_cache, **render_options)
+        return super().build()

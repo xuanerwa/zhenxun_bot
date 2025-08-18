@@ -78,10 +78,25 @@ class NotebookBuilder(BaseBuilder[NotebookData]):
         self.add_component(Divider(**kwargs))
         return self
 
-    def add_component(self, component: RenderableComponent) -> "NotebookBuilder":
-        """向 Notebook 中添加一个可渲染的自定义组件。"""
+    def add_component(
+        self, component: "RenderableComponent | BaseBuilder"
+    ) -> "NotebookBuilder":
+        """
+        向 Notebook 中添加一个可渲染的自定义组件。
+
+        """
+        component_data = (
+            component.data if isinstance(component, BaseBuilder) else component
+        )
+
+        if not isinstance(component_data, RenderableComponent):
+            raise TypeError(
+                f"add_component 只能接受 RenderableComponent 或其 Builder，"
+                f"但收到了 {type(component)}"
+            )
+
         self._elements.append(
-            NotebookElement(type="component", component_data=component)
+            NotebookElement(type="component", component=component_data)
         )
         return self
 
@@ -97,11 +112,9 @@ class NotebookBuilder(BaseBuilder[NotebookData]):
             self.quote(quote)
         return self
 
-    async def build(
-        self, use_cache: bool = False, frameless: bool = False, **render_options
-    ) -> bytes:
-        """构建Notebook图片"""
+    def build(self) -> NotebookData:
+        """
+        构建并返回 NotebookData 模型实例。
+        """
         self._data.elements = self._elements
-        return await super().build(
-            use_cache=use_cache, frameless=frameless, **render_options
-        )
+        return super().build()

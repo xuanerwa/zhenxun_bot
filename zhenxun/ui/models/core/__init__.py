@@ -20,6 +20,7 @@ from .markdown import (
 )
 from .notebook import NotebookData, NotebookElement
 from .table import BaseCell, ImageCell, StatusBadgeCell, TableCell, TableData, TextCell
+from .template import TemplateComponent
 
 __all__ = [
     "BaseCell",
@@ -42,6 +43,7 @@ __all__ = [
     "TableCell",
     "TableData",
     "TableElement",
+    "TemplateComponent",
     "TextCell",
     "TextElement",
 ]

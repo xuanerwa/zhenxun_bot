@@ -8,7 +8,6 @@ from nonebot_plugin_session import EventSession
 from zhenxun.configs.config import Config
 from zhenxun.configs.utils import PluginExtraData, RegisterConfig
 from zhenxun.services.log import logger
-from zhenxun.services.renderer import renderer_service
 from zhenxun.utils.enum import PluginType
 from zhenxun.utils.message import MessageUtils
 
@@ -56,9 +55,6 @@ _matcher = on_alconna(
 async def _(session: EventSession, arparma: Arparma):
     Config.reload()
     logger.debug("自动重载配置文件", arparma.header_result, session=session)
-
-    await renderer_service.reload_theme()
-
     await MessageUtils.build_message("重载完成!").send(reply_to=True)
 
 

@@ -9,10 +9,10 @@ from nonebot.drivers import Driver
 from nonebot_plugin_uninfo import Uninfo
 import pytz
 
+from zhenxun import ui
 from zhenxun.configs.config import BotConfig, Config
 from zhenxun.models.sign_log import SignLog
 from zhenxun.models.sign_user import SignUser
-from zhenxun.services import renderer_service
 from zhenxun.utils.manager.priority_manager import PriorityLifecycle
 from zhenxun.utils.platform import PlatformUtils
 
@@ -281,7 +281,7 @@ async def _generate_html_card(
         "last_sign_date_str": last_sign_date_str,
     }
 
-    image_bytes = await renderer_service.render("pages/builtin/sign", data=card_data)
+    image_bytes = await ui.render_template("pages/builtin/sign", data=card_data)
 
     async with aiofiles.open(card_file, "wb") as f:
         await f.write(image_bytes)

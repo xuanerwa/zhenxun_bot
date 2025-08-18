@@ -19,4 +19,4 @@ class Badge(RenderableComponent):
 
     @property
     def template_name(self) -> str:
-        return "components/widgets/badge/main.html"
+        return "components/widgets/badge"

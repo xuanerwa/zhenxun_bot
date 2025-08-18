@@ -18,7 +18,7 @@ class Divider(RenderableComponent):
 
     @property
     def template_name(self) -> str:
-        return "components/widgets/divider/main.html"
+        return "components/widgets/divider"
 
 
 class Rectangle(RenderableComponent):
@@ -32,4 +32,4 @@ class Rectangle(RenderableComponent):
 
     @property
     def template_name(self) -> str:
-        return "components/widgets/rectangle/main.html"
+        return "components/widgets/rectangle"

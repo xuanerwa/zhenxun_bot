@@ -4,10 +4,12 @@ import nonebot
 from nonebot.plugin import PluginMetadata
 from pydantic import BaseModel
 
+from zhenxun import ui
 from zhenxun.configs.config import BotConfig
 from zhenxun.models.plugin_info import PluginInfo
 from zhenxun.models.task_info import TaskInfo
-from zhenxun.ui import HelpCategory, HelpItem, PluginHelpPageBuilder
+from zhenxun.ui.builders import PluginHelpPageBuilder
+from zhenxun.ui.models import HelpCategory, HelpItem
 from zhenxun.utils.common_utils import format_usage_for_markdown
 from zhenxun.utils.enum import PluginType
 
@@ -104,6 +106,6 @@ async def create_plugin_help_image(
             )
         )
 
-    image_bytes = await builder.build()
+    image_bytes = await ui.render(builder.build(), use_cache=True)
 
     return image_bytes

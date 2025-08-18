@@ -6,12 +6,12 @@ import aiofiles
 import nonebot
 from pydantic import BaseModel
 
+from zhenxun import ui
 from zhenxun.configs.config import BotConfig, Config
 from zhenxun.configs.path_config import DATA_PATH
 from zhenxun.configs.utils.models import PluginExtraData
 from zhenxun.models.statistics import Statistics
 from zhenxun.models.user_console import UserConsole
-from zhenxun.services import renderer_service
 from zhenxun.services.log import logger
 from zhenxun.utils.platform import PlatformUtils
 from zhenxun.utils.pydantic_compat import model_dump
@@ -161,8 +161,10 @@ class BotProfileManager:
             "tags": tags,
             "title": f"{BotConfig.self_nickname}简介",
         }
-        return await renderer_service.render(
-            "pages/builtin/bot_profile", data=profile_data
+        return await ui.render_template(
+            "pages/builtin/bot_profile",
+            data=profile_data,
+            use_cache=True,
         )
 
 

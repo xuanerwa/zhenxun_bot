@@ -39,4 +39,4 @@ class PluginMenuData(RenderableComponent):
 
     @property
     def template_name(self) -> str:
-        return "pages/core/plugin_menu/main.html"
+        return "pages/core/plugin_menu"

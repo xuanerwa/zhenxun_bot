@@ -14,12 +14,13 @@ from nonebot_plugin_alconna import (
 from nonebot_plugin_session import EventSession
 import pytz
 
+from zhenxun import ui
 from zhenxun.configs.config import Config
 from zhenxun.configs.utils import Command, PluginExtraData, RegisterConfig
 from zhenxun.models.chat_history import ChatHistory
 from zhenxun.models.group_member_info import GroupInfoUser
 from zhenxun.services.log import logger
-from zhenxun.ui import TableBuilder
+from zhenxun.ui.builders import TableBuilder
 from zhenxun.ui.models import ImageCell, TextCell
 from zhenxun.utils.enum import PluginType
 from zhenxun.utils.message import MessageUtils
@@ -174,7 +175,7 @@ async def _(
         builder = TableBuilder(f"消息排行({count.result})", date_str)
         builder.set_headers(column_name).add_rows(rows_data)
 
-        image_bytes = await builder.build()
+        image_bytes = await ui.render(builder.build())
 
         logger.info(
             f"查看消息排行 数量={count.result}", arparma.header_result, session=session

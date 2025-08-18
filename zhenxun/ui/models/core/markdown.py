@@ -1,7 +1,13 @@
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Literal
 
+import aiofiles
 from pydantic import BaseModel, Field
+
+from zhenxun.services.log import logger
+
+from .base import RenderableComponent
 
 __all__ = [
     "CodeElement",
@@ -115,10 +121,35 @@ class ListElement(ContainerElement):
         return "\n".join(lines)
 
 
-class MarkdownData(BaseModel):
+class MarkdownData(RenderableComponent):
     """Markdown转图片的数据模型"""
 
     style_name: str | None = None
     markdown: str
     width: int = 800
     css_path: str | None = None
+
+    @property
+    def template_name(self) -> str:
+        return "components/core/markdown"
+
+    async def get_extra_css(self, theme_manager) -> str:
+        if self.css_path:
+            css_file = Path(self.css_path)
+            if css_file.is_file():
+                async with aiofiles.open(css_file, encoding="utf-8") as f:
+                    return await f.read()
+            else:
+                logger.warning(f"Markdown自定义CSS文件不存在: {self.css_path}")
+        else:
+            style_name = self.style_name or "github-light"
+            css_path = (
+                theme_manager.current_theme.default_assets_dir
+                / "css"
+                / "markdown"
+                / f"{style_name}.css"
+            )
+            if css_path.exists():
+                async with aiofiles.open(css_path, encoding="utf-8") as f:
+                    return await f.read()
+        return ""

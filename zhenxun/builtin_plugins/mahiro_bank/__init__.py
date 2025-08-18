@@ -6,9 +6,9 @@ from nonebot_plugin_apscheduler import scheduler
 from nonebot_plugin_uninfo import Uninfo
 from nonebot_plugin_waiter import prompt_until
 
+from zhenxun import ui
 from zhenxun.configs.utils import PluginExtraData, RegisterConfig
 from zhenxun.services.log import logger
-from zhenxun.services.renderer import renderer_service
 from zhenxun.utils.depends import UserName
 from zhenxun.utils.message import MessageUtils
 from zhenxun.utils.utils import is_number
@@ -193,7 +193,7 @@ async def _(session: Uninfo, arparma: Arparma, uname: str = UserName()):
 
     render_data = {"page_type": "user", "payload": user_payload}
 
-    image_bytes = await renderer_service.render(
+    image_bytes = await ui.render_template(
         "pages/builtin/mahiro_bank",
         data=render_data,
         viewport={"width": 386, "height": 10},
@@ -209,7 +209,7 @@ async def _(session: Uninfo, arparma: Arparma):
 
     render_data = {"page_type": "overview", "payload": overview_payload}
 
-    image_bytes = await renderer_service.render(
+    image_bytes = await ui.render_template(
         "pages/builtin/mahiro_bank",
         data=render_data,
         viewport={"width": 450, "height": 10},

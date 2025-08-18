@@ -2,8 +2,8 @@ import os
 from pathlib import Path
 import random
 
-from zhenxun.services import renderer_service
-from zhenxun.utils._build_image import BuildImage
+from zhenxun import ui
+from zhenxun.ui.models import BarChartData
 
 from .models import Barh
 
@@ -14,18 +14,19 @@ BACKGROUND_PATH = (
 
 class ChartUtils:
     @classmethod
-    async def barh(cls, data: Barh) -> BuildImage:
+    async def barh(cls, data: Barh) -> bytes:
         """横向统计图"""
-        background_image_name = random.choice(os.listdir(BACKGROUND_PATH))
-        render_data = {
-            "title": data.title,
-            "category_data": data.category_data,
-            "data": data.data,
-            "background_image": background_image_name,
-            "direction": "horizontal",
-        }
-
-        image_bytes = await renderer_service.render(
-            "components/charts/bar_chart", data=render_data
+        background_image_name = (
+            random.choice(os.listdir(BACKGROUND_PATH))
+            if BACKGROUND_PATH.exists()
+            else None
         )
-        return BuildImage.open(image_bytes)
+        chart_component = BarChartData(
+            title=data.title,
+            category_data=data.category_data,
+            data=data.data,
+            background_image=background_image_name,
+            direction="horizontal",
+        )
+
+        return await ui.render(chart_component)

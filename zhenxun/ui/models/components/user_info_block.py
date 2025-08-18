@@ -20,4 +20,4 @@ class UserInfoBlock(RenderableComponent):
 
     @property
     def template_name(self) -> str:
-        return "components/widgets/user_info_block/main.html"
+        return "components/widgets/user_info_block"

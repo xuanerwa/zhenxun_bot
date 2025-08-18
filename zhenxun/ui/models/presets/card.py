@@ -33,5 +33,4 @@ class InfoCardData(RenderableComponent):
 
     @property
     def template_name(self) -> str:
-        """返回用于渲染此组件的Jinja2模板的路径。"""
-        return "components/presets/info_card/main.html"
+        return "components/presets/info_card"

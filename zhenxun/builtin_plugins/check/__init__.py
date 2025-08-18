@@ -5,10 +5,10 @@ from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule, to_me
 from nonebot_plugin_alconna import Alconna, on_alconna
 
+from zhenxun import ui
 from zhenxun.configs.config import Config
 from zhenxun.configs.utils import PluginExtraData, RegisterConfig
 from zhenxun.services.log import logger
-from zhenxun.services.renderer import renderer_service
 from zhenxun.utils.enum import PluginType
 from zhenxun.utils.message import MessageUtils
 from zhenxun.utils.rules import notice_rule
@@ -68,8 +68,9 @@ async def handle_self_check():
     try:
         data_dict = await get_status_info()
 
-        image_bytes = await renderer_service.render(
-            "pages/builtin/check", data=data_dict
+        image_bytes = await ui.render_template(
+            "pages/builtin/check",
+            data=data_dict,
         )
 
         await MessageUtils.build_message(image_bytes).send()

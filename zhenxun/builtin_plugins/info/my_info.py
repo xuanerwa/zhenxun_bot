@@ -5,12 +5,12 @@ from nonebot_plugin_uninfo import Uninfo
 from tortoise.expressions import RawSQL
 from tortoise.functions import Count
 
+from zhenxun import ui
 from zhenxun.models.chat_history import ChatHistory
 from zhenxun.models.level_user import LevelUser
 from zhenxun.models.sign_user import SignUser
 from zhenxun.models.statistics import Statistics
 from zhenxun.models.user_console import UserConsole
-from zhenxun.services import renderer_service
 from zhenxun.utils.platform import PlatformUtils
 
 RACE = [
@@ -198,4 +198,4 @@ async def get_user_info(
         },
     }
 
-    return await renderer_service.render("pages/builtin/my_info", data=profile_data)
+    return await ui.render_template("pages/builtin/my_info", data=profile_data)

@@ -1,9 +1,10 @@
 from typing import Any
 
+from zhenxun.services import renderer_service
 from zhenxun.services.llm.core import KeyStatus
 from zhenxun.services.llm.types import ModelModality
-from zhenxun.ui import MarkdownBuilder, TableBuilder
-from zhenxun.ui.models import StatusBadgeCell, TextCell
+from zhenxun.ui.builders import MarkdownBuilder, TableBuilder
+from zhenxun.ui.models.core.table import StatusBadgeCell, TextCell
 
 
 def _format_seconds(seconds: int) -> str:
@@ -35,7 +36,7 @@ class Presenters:
             builder = TableBuilder(
                 title=title, tip="当前没有配置任何LLM模型。"
             ).set_headers(["提供商", "模型名称", "API类型", "状态"])
-            return await builder.build()
+            return await renderer_service.render(builder.build())
 
         column_name = ["提供商", "模型名称", "API类型", "状态"]
         data_list = []
@@ -60,7 +61,7 @@ class Presenters:
         )
         builder.set_headers(column_name)
         builder.add_rows(data_list)
-        return await builder.build(use_cache=True)
+        return await renderer_service.render(builder.build(), use_cache=True)
 
     @staticmethod
     async def format_model_details_as_markdown_image(details: dict[str, Any]) -> bytes:
@@ -99,7 +100,7 @@ class Presenters:
         builder.text(f"- **最大Token**: {token_value}")
         builder.text(f"- **核心能力**: {', '.join(cap_list) or '纯文本'}")
 
-        return await builder.with_style("light").build()
+        return await renderer_service.render(builder.with_style("light").build())
 
     @staticmethod
     async def format_key_status_as_image(
@@ -181,4 +182,4 @@ class Presenters:
             ]
         )
         builder.add_rows(data_list)
-        return await builder.build(use_cache=False)
+        return await renderer_service.render(builder.build(), use_cache=False)

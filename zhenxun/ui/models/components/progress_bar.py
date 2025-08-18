@@ -21,4 +21,4 @@ class ProgressBar(RenderableComponent):
 
     @property
     def template_name(self) -> str:
-        return "components/widgets/progress_bar/main.html"
+        return "components/widgets/progress_bar"

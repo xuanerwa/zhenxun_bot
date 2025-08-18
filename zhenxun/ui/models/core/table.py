@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .base import RenderableComponent
+
 __all__ = [
     "BaseCell",
     "ImageCell",
@@ -49,7 +51,7 @@ class StatusBadgeCell(BaseCell):
 TableCell = TextCell | ImageCell | StatusBadgeCell | str | int | float | None
 
 
-class TableData(BaseModel):
+class TableData(RenderableComponent):
     """通用表格的数据模型"""
 
     style_name: str | None = None
@@ -57,3 +59,7 @@ class TableData(BaseModel):
     tip: str | None = Field(None, description="表格下方的提示信息")
     headers: list[str] = Field(default_factory=list, description="表头列表")
     rows: list[list[TableCell]] = Field(default_factory=list, description="数据行列表")
+
+    @property
+    def template_name(self) -> str:
+        return "components/core/table"

@@ -11,7 +11,8 @@ class Theme(BaseModel):
 
     name: str = Field(..., description="主题名称")
     palette: dict[str, Any] = Field(
-        default_factory=dict, description="用于PIL渲染的调色板"
+        default_factory=dict,
+        description="主题的调色板，用于定义CSS变量和Jinja2模板中的颜色常量",
     )
     style_css: str = Field("", description="用于HTML渲染的全局CSS内容")
     assets_dir: Path = Field(..., description="主题的资产目录路径")
@@ -31,9 +32,6 @@ class TemplateManifest(BaseModel):
     )
     entrypoint: str = Field(
         ..., description="模板的入口文件 (例如 'template.html' 或 'renderer.py')"
-    )
-    schema_path: str | None = Field(
-        None, description="用于数据验证的Pydantic模型的Python导入路径"
     )
     render_options: dict[str, Any] = Field(
         default_factory=dict, description="传递给渲染引擎的额外选项 (如viewport)"

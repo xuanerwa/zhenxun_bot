@@ -13,6 +13,7 @@ from nonebot_plugin_uninfo import Uninfo
 from pydantic import BaseModel, Field, create_model
 from tortoise.expressions import Q
 
+from zhenxun import ui
 from zhenxun.configs.config import BotConfig
 from zhenxun.models.friend_user import FriendUser
 from zhenxun.models.goods_info import GoodsInfo
@@ -20,7 +21,6 @@ from zhenxun.models.group_member_info import GroupInfoUser
 from zhenxun.models.user_console import UserConsole
 from zhenxun.models.user_gold_log import UserGoldLog
 from zhenxun.models.user_props_log import UserPropsLog
-from zhenxun.services import renderer_service
 from zhenxun.services.log import logger
 from zhenxun.utils.enum import GoldHandle, PropHandle
 from zhenxun.utils.image_utils import BuildImage, ImageTemplate
@@ -622,4 +622,4 @@ async def prepare_shop_data() -> bytes:
         "categories": categories,
     }
 
-    return await renderer_service.render("pages/builtin/shop", data=shop_data)
+    return await ui.render_template("pages/builtin/shop", data=shop_data)

@@ -35,4 +35,4 @@ class PluginHelpPageData(RenderableComponent):
 
     @property
     def template_name(self) -> str:
-        return "pages/core/help_page/main.html"
+        return "pages/core/help_page"

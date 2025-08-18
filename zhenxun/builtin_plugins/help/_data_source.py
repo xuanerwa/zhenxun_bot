@@ -1,6 +1,7 @@
 import nonebot
 from nonebot_plugin_uninfo import Uninfo
 
+from zhenxun import ui
 from zhenxun.configs.config import BotConfig, Config
 from zhenxun.configs.path_config import IMAGE_PATH
 from zhenxun.configs.utils import PluginExtraData
@@ -13,15 +14,14 @@ from zhenxun.services import (
     LLMException,
     LLMMessage,
     generate,
-    renderer_service,
 )
 from zhenxun.services.log import logger
-from zhenxun.ui import (
+from zhenxun.ui.builders import (
     InfoCardBuilder,
     NotebookBuilder,
     PluginMenuBuilder,
-    PluginMenuCategory,
 )
+from zhenxun.ui.models import PluginMenuCategory
 from zhenxun.utils.common_utils import format_usage_for_markdown
 from zhenxun.utils.enum import BlockType, PluginType
 from zhenxun.utils.platform import PlatformUtils
@@ -120,7 +120,7 @@ async def create_help_img(
             PluginMenuCategory(name=category["name"], items=category["items"])
         )
 
-    return await builder.build()
+    return await ui.render(builder.build())
 
 
 async def get_user_allow_help(user_id: str) -> list[PluginType]:
@@ -214,7 +214,7 @@ async def get_plugin_help(user_id: str, name: str, is_superuser: bool) -> str | 
             render_dict = model_dump(builder._data)
             render_dict["style_name"] = style_name
 
-            return await renderer_service.render("pages/builtin/help", data=render_dict)
+            return await ui.render_template("pages/builtin/help", data=render_dict)
         return "糟糕! 该功能没有帮助喔..."
     return "没有查找到这个功能噢..."
 
@@ -295,7 +295,7 @@ async def get_llm_help(question: str, user_id: str) -> str | bytes:
         if len(reply_text) > threshold:
             builder = NotebookBuilder()
             builder.text(reply_text)
-            return await builder.build()
+            return await ui.render(builder.build())
 
         return reply_text
 
