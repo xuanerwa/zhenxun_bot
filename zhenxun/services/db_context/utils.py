@@ -11,11 +11,15 @@ from .config import (
 
 
 async def with_db_timeout(
-    coro, timeout: float = DB_TIMEOUT_SECONDS, operation: str | None = None
+    coro,
+    timeout: float = DB_TIMEOUT_SECONDS,
+    operation: str | None = None,
+    source: str | None = None,
 ):
     """带超时控制的数据库操作"""
     start_time = time.time()
     try:
+        logger.debug(f"开始执行数据库操作: {operation} 来源: {source}")
         result = await asyncio.wait_for(coro, timeout=timeout)
         elapsed = time.time() - start_time
         if elapsed > SLOW_QUERY_THRESHOLD and operation:

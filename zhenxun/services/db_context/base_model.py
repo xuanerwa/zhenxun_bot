@@ -227,6 +227,7 @@ class Model(TortoiseModel):
                 return await with_db_timeout(
                     cls.get_or_none(*args, using_db=using_db, **kwargs),
                     operation=f"{cls.__name__}.get_or_none",
+                    source="DataBaseModel",
                 )
             except MultipleObjectsReturned:
                 # 如果出现多个记录的情况，进行特殊处理
@@ -239,6 +240,7 @@ class Model(TortoiseModel):
                 records = await with_db_timeout(
                     cls.filter(*args, **kwargs).all(),
                     operation=f"{cls.__name__}.filter.all",
+                    source="DataBaseModel",
                 )
 
                 if not records:
@@ -255,6 +257,7 @@ class Model(TortoiseModel):
                             await with_db_timeout(
                                 record.delete(),
                                 operation=f"{cls.__name__}.delete_duplicate",
+                                source="DataBaseModel",
                             )
                             logger.info(
                                 f"{cls.__name__} 删除重复记录:"
@@ -269,11 +272,13 @@ class Model(TortoiseModel):
                     return await with_db_timeout(
                         cls.filter(*args, **kwargs).order_by("-id").first(),
                         operation=f"{cls.__name__}.filter.order_by.first",
+                        source="DataBaseModel",
                     )
                 # 如果没有 id 字段，则返回第一个记录
                 return await with_db_timeout(
                     cls.filter(*args, **kwargs).first(),
                     operation=f"{cls.__name__}.filter.first",
+                    source="DataBaseModel",
                 )
         except asyncio.TimeoutError:
             logger.error(

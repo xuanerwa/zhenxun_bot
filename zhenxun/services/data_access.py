@@ -7,6 +7,8 @@ from zhenxun.services.log import logger
 
 T = TypeVar("T", bound=Model)
 
+cache = CacheRoot.cache_dict("DB_TEST_BAN", 10, int)
+
 
 class DataAccess(Generic[T]):
     """数据访问层，根据配置决定是否使用缓存
@@ -167,6 +169,7 @@ class DataAccess(Generic[T]):
             return await with_db_timeout(
                 db_query_func(*args, **kwargs),
                 operation=f"{self.model_cls.__name__}.{db_query_func.__name__}",
+                source="DataAccess",
             )
 
         # 尝试从缓存获取
@@ -179,9 +182,10 @@ class DataAccess(Generic[T]):
             if cache_key is not None:
                 data = await self.cache.get(cache_key)
                 logger.debug(
-                    f"{self.model_cls.__name__} self.cache.get(cache_key)"
+                    f"{self.model_cls.__name__}  key: {cache_key}"
                     f" 从缓存获取到的数据 {type(data)}: {data}"
                 )
+
                 if data == self._NULL_RESULT:
                     # 空结果缓存命中
                     self._cache_stats[self.cache_type]["null_hits"] += 1
