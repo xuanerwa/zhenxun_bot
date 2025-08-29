@@ -14,7 +14,7 @@ from zhenxun.utils.image_utils import BuildImage, ImageTemplate, RowStyle
 from zhenxun.utils.manager.virtual_env_package_manager import VirtualEnvPackageManager
 from zhenxun.utils.repo_utils import RepoFileManager
 from zhenxun.utils.repo_utils.models import RepoFileInfo, RepoType
-from zhenxun.utils.utils import is_number
+from zhenxun.utils.utils import is_number, win_on_rm_error
 
 from .config import (
     BASE_PATH,
@@ -268,6 +268,7 @@ class StoreManager:
         elif source == "git":
             repo_type = RepoType.GITHUB
         replace_module_path = module_path.replace(".", "/")
+        plugin_name = module_path.split(".")[-1]
         if is_dir:
             files = await RepoFileManager.list_directory_files(
                 github_url, replace_module_path, repo_type=repo_type
@@ -275,11 +276,18 @@ class StoreManager:
         else:
             files = [RepoFileInfo(path=f"{replace_module_path}.py", is_dir=False)]
         local_path = BASE_PATH / "plugins" if is_external else BASE_PATH
+        target_dir = BASE_PATH / "plugins" / plugin_name
         files = [file for file in files if not file.is_dir]
         download_files = [(file.path, local_path / file.path) for file in files]
-        await RepoFileManager.download_files(
-            github_url, download_files, repo_type=repo_type
+        result = await RepoFileManager.download_files(
+            github_url,
+            download_files,
+            repo_type=repo_type,
+            sparse_path=replace_module_path,
+            target_dir=target_dir,
         )
+        if not result.success:
+            raise PluginStoreException(result.error_message)
 
         requirement_paths = [
             file
@@ -344,7 +352,8 @@ class StoreManager:
             return f"插件 {plugin_info.name} 不存在..."
         logger.debug(f"尝试移除插件 {plugin_info.name} 文件: {path}", LOG_COMMAND)
         if plugin_info.is_dir:
-            shutil.rmtree(path)
+            # 处理 Windows 下 .git 等目录内只读文件导致的 WinError 5
+            shutil.rmtree(path, onerror=win_on_rm_error)
         else:
             path.unlink()
         await PluginInitManager.remove(f"zhenxun.{plugin_info.module_path}")
