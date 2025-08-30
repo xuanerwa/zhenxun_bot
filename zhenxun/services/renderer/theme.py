@@ -56,6 +56,138 @@ class Theme(BaseModel):
     default_assets_dir: Path
 
 
+class ResourceResolver:
+    """
+    一个独立的、用于解析组件和主题资源的类。
+    封装了所有复杂的路径查找和回退逻辑。
+
+    资源解析遵循以下回退顺序，以支持强大的主题覆盖和组件化:
+
+    1.  **相对路径 (`./`)**: 对于在模板中使用 `asset('./style.css')` 的情况，
+        这是组件内部的资源。
+        a.  **皮肤资源**: 首先在当前组件的皮肤目录中查找
+            (`.../skins/{variant_name}/assets/`)。
+            这允许皮肤完全覆盖其组件的默认资源。
+        b.  **当前主题组件资源**: 接着在当前激活主题的组件根目录中查找
+            (`.../{theme_name}/.../assets/`)。
+        c.  **默认主题组件资源**: 如果仍未找到，最后回退到 `default` 主题中
+            对应的组件目录
+            (`.../default/.../assets/`) 查找。这是核心的回退逻辑。
+
+    2.  **全局路径**: 对于使用 `asset('js/script.js')` 的情况，这是主题的全局资源。
+        a.  **当前主题全局资源**: 在当前激活主题的根 `assets` 目录中查找
+            (`themes/{theme_name}/assets/`)。
+        b.  **默认主题全局资源**: 如果找不到，则回退到 `default` 主题的根 `assets` 目录
+            (`themes/default/assets/`)。
+    """
+
+    def __init__(self, theme_manager: "ThemeManager"):
+        self.theme_manager = theme_manager
+
+    def _find_component_root(self, start_path: Path) -> Path:
+        """从给定路径向上查找，找到包含 manifest.json 的组件根目录。"""
+        current_path = start_path.parent
+        themes_root_parts = len(THEMES_PATH.parts)
+        for _ in range(len(current_path.parts) - themes_root_parts):
+            if (current_path / "manifest.json").exists():
+                return current_path
+            if current_path.parent == current_path:
+                break
+            current_path = current_path.parent
+        return start_path.parent
+
+    def _search_paths_for_relative_asset(
+        self, asset_path: str, parent_template_name: str
+    ) -> list[tuple[str, Path]]:
+        """为相对路径的资源生成所有可能的查找路径元组 (描述, 路径)。"""
+        if not self.theme_manager.current_theme:
+            return []
+
+        paths_to_check: list[tuple[str, Path]] = []
+        current_theme_name = self.theme_manager.current_theme.name
+        current_theme_root = self.theme_manager.current_theme.assets_dir.parent
+        default_theme_root = self.theme_manager.current_theme.default_assets_dir.parent
+
+        if not self.theme_manager.jinja_env.loader:
+            return []
+
+        source_info = self.theme_manager.jinja_env.loader.get_source(
+            self.theme_manager.jinja_env, parent_template_name
+        )
+        if not source_info[1]:
+            return []
+
+        parent_template_abs_path = Path(source_info[1])
+
+        component_logical_root = Path(parent_template_name).parent
+
+        if (
+            "/skins/" in parent_template_abs_path.as_posix()
+            or "\\skins\\" in parent_template_abs_path.as_posix()
+        ):
+            skin_dir = parent_template_abs_path.parent
+            paths_to_check.append(
+                (
+                    f"'{current_theme_name}' 主题皮肤资源",
+                    skin_dir / "assets" / asset_path,
+                )
+            )
+
+        paths_to_check.append(
+            (
+                f"'{current_theme_name}' 主题组件资源",
+                current_theme_root / component_logical_root / "assets" / asset_path,
+            )
+        )
+
+        if current_theme_name != "default":
+            paths_to_check.append(
+                (
+                    "'default' 主题组件资源 (回退)",
+                    default_theme_root / component_logical_root / "assets" / asset_path,
+                )
+            )
+        return paths_to_check
+
+    def resolve_asset_uri(self, asset_path: str, current_template_name: str) -> str:
+        """解析资源路径，实现完整的回退逻辑，并返回可用的URI。"""
+        if not self.theme_manager.current_theme:
+            return ""
+
+        search_paths: list[tuple[str, Path]] = []
+        if asset_path.startswith("./"):
+            search_paths.extend(
+                self._search_paths_for_relative_asset(
+                    asset_path[2:], current_template_name
+                )
+            )
+        else:
+            search_paths.append(
+                (
+                    f"'{self.theme_manager.current_theme.name}' 主题全局资源",
+                    self.theme_manager.current_theme.assets_dir / asset_path,
+                )
+            )
+            if self.theme_manager.current_theme.name != "default":
+                search_paths.append(
+                    (
+                        "'default' 主题全局资源 (回退)",
+                        self.theme_manager.current_theme.default_assets_dir
+                        / asset_path,
+                    )
+                )
+
+        for source_desc, path in search_paths:
+            if path.exists():
+                logger.debug(f"解析资源 '{asset_path}' -> 找到 {source_desc}: '{path}'")
+                return path.absolute().as_uri()
+
+        logger.warning(
+            f"资源文件未找到: '{asset_path}' (在模板 '{current_template_name}' 中引用)"
+        )
+        return ""
+
+
 class ThemeManager:
     def __init__(self, env: Environment):
         """
@@ -83,120 +215,31 @@ class ThemeManager:
             return []
         return [d.name for d in THEMES_PATH.iterdir() if d.is_dir()]
 
-    def _find_component_root(self, start_path: Path) -> Path:
+    def _create_asset_loader(self) -> Callable[..., str]:
         """
-        从给定的起始路径向上查找，直到找到包含 manifest.json 的目录。
-        这被认为是组件的根目录。如果找不到，则返回起始路径的目录。
+        创建一个闭包函数 (Jinja2中的 `asset()` 函数)，使用
+        ResourceResolver 进行路径解析。
         """
-        current_path = start_path.parent
-        for _ in range(len(current_path.parts)):
-            if (current_path / "manifest.json").exists():
-                return current_path
-            if current_path.parent == current_path:
-                break
-            current_path = current_path.parent
-        return start_path.parent
-
-    def _create_asset_loader(
-        self, local_base_path: Path | None = None
-    ) -> Callable[..., str]:
-        """
-        创建并返回一个用于解析静态资源的闭包函数 (Jinja2中的 `asset()` 函数)。
-
-        该函数实现了强大的资源解析回退逻辑，查找顺序如下:
-        1.  **相对路径 (`./`)**: 优先查找相对于当前模板的 `assets` 目录。
-            - 这支持组件皮肤 (`skins/`) 对其资源的覆盖。
-        2.  **当前主题**: 在当前激活主题的 `assets` 目录中查找。
-        3.  **默认主题**: 如果当前主题未找到，则回退到 `default` 主题的 `assets` 目录。
-
-        参数:
-            local_base_path: (可选) 当渲染独立模板时，提供模板所在的目录。
-        """
+        resolver = ResourceResolver(self)
 
         @pass_context
         def asset_loader(ctx, asset_path: str) -> str:
-            if asset_path.startswith("./"):
-                parent_template_name = ctx.environment.get_template(ctx.name).name
-                parent_template_abs_path = Path(
-                    ctx.environment.loader.get_source(
-                        ctx.environment, parent_template_name
-                    )[1]
-                )
-
-                if (
-                    "/skins/" in parent_template_abs_path.as_posix()
-                    or "\\skins\\" in parent_template_abs_path.as_posix()
-                ):
-                    skin_dir = parent_template_abs_path.parent
-                    skin_asset_path = skin_dir / "assets" / asset_path[2:]
-                    if skin_asset_path.exists():
-                        logger.debug(f"找到皮肤本地资源: '{skin_asset_path}'")
-                        return skin_asset_path.absolute().as_uri()
-                    logger.debug(
-                        f"皮肤本地资源未找到: '{skin_asset_path}',将回退到组件公共资源"
-                    )
-
-                component_root = self._find_component_root(parent_template_abs_path)
-
-                local_asset = component_root / "assets" / asset_path[2:]
-                if local_asset.exists():
-                    logger.debug(f"找到组件公共资源: '{local_asset}'")
-                    return local_asset.absolute().as_uri()
-
-                logger.warning(
-                    f"组件相对资源未找到: '{asset_path}'。已在皮肤和组件根目录中查找。"
-                )
-                return ""
-
-            assert self.current_theme is not None
-            current_theme_asset = self.current_theme.assets_dir / asset_path
-            if current_theme_asset.exists():
-                return current_theme_asset.absolute().as_uri()
-
-            default_theme_asset = self.current_theme.default_assets_dir / asset_path
-            if default_theme_asset.exists():
-                return default_theme_asset.absolute().as_uri()
-
-            logger.warning(
-                f"资源文件在主题 '{self.current_theme.name}' 和 'default' 中均未找到: "
-                f"{asset_path}"
-            )
-            return ""
+            if not ctx.name:
+                logger.warning("Jinja2 上下文缺少模板名称，无法进行资源解析。")
+                return resolver.resolve_asset_uri(asset_path, "unknown_template")
+            parent_template_name = ctx.name
+            return resolver.resolve_asset_uri(asset_path, parent_template_name)
 
         return asset_loader
 
     def _create_standalone_asset_loader(
         self, local_base_path: Path
     ) -> Callable[[str], str]:
-        """
-        [新增] 为独立模板创建一个专用的、更简单的 asset loader。
-        """
+        """为独立模板创建一个专用的 asset loader。"""
+        resolver = ResourceResolver(self)
 
         def asset_loader(asset_path: str) -> str:
-            if asset_path.startswith("./"):
-                local_file = local_base_path / "assets" / asset_path[2:]
-                if local_file.exists():
-                    return local_file.absolute().as_uri()
-                logger.warning(
-                    f"独立模板本地资源 '{asset_path}' 在 "
-                    f"'{local_base_path / 'assets'}' 中未找到。"
-                )
-                return ""
-
-            assert self.current_theme is not None
-            current_theme_asset = self.current_theme.assets_dir / asset_path
-            if current_theme_asset.exists():
-                return current_theme_asset.absolute().as_uri()
-
-            default_theme_asset = self.current_theme.default_assets_dir / asset_path
-            if default_theme_asset.exists():
-                return default_theme_asset.absolute().as_uri()
-
-            logger.warning(
-                f"资源文件在主题 '{self.current_theme.name}' 和 'default' 中均未找到: "
-                f"{asset_path}"
-            )
-            return ""
+            return resolver.resolve_asset_uri(asset_path, str(local_base_path))
 
         return asset_loader
 
@@ -278,15 +321,7 @@ class ThemeManager:
                 new_theme_loader = FileSystemLoader(
                     [str(theme_dir), str(THEMES_PATH / "default")]
                 )
-                self.jinja_env.loader = ChoiceLoader([prefix_loader, new_theme_loader])
-            else:
-                self.jinja_env.loader = FileSystemLoader(
-                    [str(theme_dir), str(THEMES_PATH / "default")]
-                )
-        else:
-            self.jinja_env.loader = FileSystemLoader(
-                [str(theme_dir), str(THEMES_PATH / "default")]
-            )
+                self.jinja_env.loader.loaders = [prefix_loader, new_theme_loader]
 
         palette_path = theme_dir / "palette.json"
         palette = (

@@ -26,12 +26,14 @@ from .core import (
     QuoteElement,
     RawHtmlElement,
     RenderableComponent,
+    RichTextCell,
     StatusBadgeCell,
     TableCell,
     TableData,
     TableElement,
     TextCell,
     TextElement,
+    TextSpan,
 )
 from .presets import (
     HelpCategory,
@@ -71,11 +73,13 @@ __all__ = [
     "RawHtmlElement",
     "Rectangle",
     "RenderableComponent",
+    "RichTextCell",
     "StatusBadgeCell",
     "TableCell",
     "TableData",
     "TableElement",
     "TextCell",
     "TextElement",
+    "TextSpan",
     "UserInfoBlock",
 ]

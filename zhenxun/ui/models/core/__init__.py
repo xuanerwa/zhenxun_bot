@@ -22,7 +22,15 @@ from .markdown import (
     TextElement,
 )
 from .notebook import NotebookData, NotebookElement
-from .table import BaseCell, ImageCell, StatusBadgeCell, TableCell, TableData, TextCell
+from .table import (
+    BaseCell,
+    ImageCell,
+    RichTextCell,
+    StatusBadgeCell,
+    TableCell,
+    TableData,
+    TextCell,
+)
 from .template import TemplateComponent
 from .text import TextData, TextSpan
 
@@ -48,6 +56,7 @@ __all__ = [
     "QuoteElement",
     "RawHtmlElement",
     "RenderableComponent",
+    "RichTextCell",
     "StatusBadgeCell",
     "TableCell",
     "TableData",

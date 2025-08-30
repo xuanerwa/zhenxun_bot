@@ -6,6 +6,7 @@ import secrets
 from nonebot_plugin_uninfo import Uninfo
 import pytz
 
+from zhenxun import ui
 from zhenxun.configs.path_config import IMAGE_PATH
 from zhenxun.models.friend_user import FriendUser
 from zhenxun.models.group_member_info import GroupInfoUser
@@ -13,7 +14,7 @@ from zhenxun.models.sign_log import SignLog
 from zhenxun.models.sign_user import SignUser
 from zhenxun.models.user_console import UserConsole
 from zhenxun.services.log import logger
-from zhenxun.utils.image_utils import BuildImage, ImageTemplate
+from zhenxun.ui.models import ImageCell, TextCell
 from zhenxun.utils.platform import PlatformUtils
 
 from ._random_event import random_event
@@ -33,7 +34,7 @@ class SignManage:
     @classmethod
     async def rank(
         cls, session: Uninfo, num: int, group_id: str | None = None
-    ) -> BuildImage | str:  # sourcery skip: avoid-builtin-shadow
+    ) -> bytes | str:
         """好感度排行
 
         参数:
@@ -42,7 +43,7 @@ class SignManage:
             group_id: 群组id
 
         返回:
-            BuildImage: 构造图片
+            bytes: 构造图片
         """
         query = SignUser
         if group_id:
@@ -78,17 +79,21 @@ class SignManage:
         data_list = []
         platform = PlatformUtils.get_platform(session)
         for i, user in enumerate(user_list):
-            bytes = await PlatformUtils.get_user_avatar(
+            ava_url = PlatformUtils.get_user_avatar_url(
                 user[0], platform, session.self_id
             )
             data_list.append(
                 [
-                    f"{i + 1}",
-                    (bytes, 30, 30) if user[3] == "qq" else "",
-                    uid2name.get(user[0]),
-                    user[1],
-                    user[2],
-                    (PLATFORM_PATH.get(user[3]), 30, 30),
+                    TextCell(content=f"{i + 1}"),
+                    ImageCell(src=ava_url or "", shape="circle")
+                    if user[3] == "qq"
+                    else TextCell(content=""),
+                    TextCell(content=uid2name.get(user[0]) or user[0]),
+                    TextCell(content=str(user[1]), bold=True),
+                    TextCell(content=str(user[2])),
+                    ImageCell(src=platform_path.resolve().as_uri())
+                    if (platform_path := PLATFORM_PATH.get(platform))
+                    else TextCell(content=""),
                 ]
             )
         if group_id:
@@ -97,7 +102,11 @@ class SignManage:
         else:
             title = "好感度全局排行"
             tip = f"你的排名在全局第 {index} 位哦!"
-        return await ImageTemplate.table_page(title, tip, column_name, data_list)
+        from zhenxun.ui.builders import TableBuilder
+
+        builder = TableBuilder(title, tip)
+        builder.set_headers(column_name).add_rows(data_list)
+        return await ui.render(builder.build())
 
     @classmethod
     async def sign(

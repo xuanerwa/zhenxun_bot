@@ -4,11 +4,13 @@ from pydantic import BaseModel, Field
 
 from ...models.components.progress_bar import ProgressBar
 from .base import RenderableComponent
+from .text import TextSpan
 
 __all__ = [
     "BaseCell",
     "ImageCell",
     "ProgressBarCell",
+    "RichTextCell",
     "StatusBadgeCell",
     "TableCell",
     "TableData",
@@ -56,8 +58,25 @@ class ProgressBarCell(BaseCell, ProgressBar):
     type: Literal["progress_bar"] = "progress_bar"  # type: ignore
 
 
+class RichTextCell(BaseCell):
+    """富文本单元格，支持多个带样式的文本片段"""
+
+    type: Literal["rich_text"] = "rich_text"  # type: ignore
+    spans: list[TextSpan] = Field(default_factory=list, description="文本片段列表")
+    direction: Literal["column", "row"] = Field("column", description="片段排列方向")
+    gap: str = Field("4px", description="片段之间的间距")
+
+
 TableCell = (
-    TextCell | ImageCell | StatusBadgeCell | ProgressBarCell | str | int | float | None
+    TextCell
+    | ImageCell
+    | StatusBadgeCell
+    | ProgressBarCell
+    | RichTextCell
+    | str
+    | int
+    | float
+    | None
 )
 
 

@@ -227,8 +227,6 @@ async def _generate_html_card(
         "current": impression,
         "level": level,
         "level_text": f"{level} [{lik2relation.get(str(level), '未知')}]",
-        "attitude": f"对你的态度: {level2attitude.get(str(level), '未知')}",
-        "relation": lik2relation.get(str(level), "未知"),
         "heart2": [1 for _ in range(level)],
         "heart1": [1 for _ in range(len(lik2level) - level - 1)],
         "next_level_at": next_impression,
@@ -238,7 +236,6 @@ async def _generate_html_card(
     reward_info = None
     rank = None
     total_gold = None
-    last_sign_date_str = None
 
     if is_card_view:
         value_list = (
@@ -249,12 +246,10 @@ async def _generate_html_card(
         rank = value_list.index(user.user_id) + 1 if user.user_id in value_list else 0
         total_gold = user_console.gold if user_console else 0
 
-        last_sign_date_str = ""
-
         reward_info = {
-            "impression": f"好感度排名第 {rank} 位",
-            "gold": f"总金币：{total_gold}",
-            "gift": "",
+            "impression_added": 0,
+            "gold_added": 0,
+            "gift_received": "",
             "is_double": False,
         }
 
@@ -285,7 +280,6 @@ async def _generate_html_card(
         "progress": progress,
         "rank": rank,
         "total_gold": total_gold,
-        "last_sign_date_str": last_sign_date_str,
     }
 
     image_bytes = await ui.render_template("pages/builtin/sign", data=card_data)

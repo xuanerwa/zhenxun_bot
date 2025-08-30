@@ -1,9 +1,11 @@
 import asyncio
 from typing import Any
 
+from zhenxun import ui
 from zhenxun.models.scheduled_job import ScheduledJob
 from zhenxun.services.scheduler import scheduler_manager
-from zhenxun.utils._image_template import ImageTemplate, RowStyle
+from zhenxun.ui.builders import TableBuilder
+from zhenxun.ui.models import StatusBadgeCell, TextCell
 from zhenxun.utils.pydantic_compat import model_json_schema
 
 
@@ -118,19 +120,6 @@ def format_update_success(schedule_info: ScheduledJob) -> str:
     return _format_operation_result_card("🔄️ 成功更新定时任务配置!", schedule_info)
 
 
-def _status_row_style(column: str, text: str) -> RowStyle:
-    """为状态列设置颜色"""
-    style = RowStyle()
-    if column == "状态":
-        if text == "启用":
-            style.font_color = "#67C23A"
-        elif text == "暂停":
-            style.font_color = "#F56C6C"
-        elif text == "运行中":
-            style.font_color = "#409EFF"
-    return style
-
-
 def _format_params(schedule_status: dict) -> str:
     """将任务参数格式化为人类可读的字符串"""
     if kwargs := schedule_status.get("job_kwargs"):
@@ -157,36 +146,47 @@ async def format_schedule_list_as_image(
     ]
     all_statuses = await asyncio.gather(*status_tasks)
 
-    def get_status_text(status_value):
-        if isinstance(status_value, bool):
-            return "启用" if status_value else "暂停"
-        return str(status_value)
+    data_list = []
+    for s in all_statuses:
+        if not s:
+            continue
 
-    data_list = [
-        [
-            s["id"],
-            s["plugin_name"],
-            s.get("bot_id") or "N/A",
-            s["group_id"] or "全局",
-            s["next_run_time"],
-            _format_trigger_info(s),
-            _format_params(s),
-            get_status_text(s["is_enabled"]),
-        ]
-        for s in all_statuses
-        if s
-    ]
+        status_value = s["is_enabled"]
+        if status_value == "运行中":
+            status_cell = StatusBadgeCell(text="运行中", status_type="info")
+        else:
+            is_enabled = status_value == "启用"
+            status_cell = StatusBadgeCell(
+                text="启用" if is_enabled else "暂停",
+                status_type="ok" if is_enabled else "error",
+            )
+
+        data_list.append(
+            [
+                TextCell(content=str(s["id"])),
+                TextCell(content=s["plugin_name"]),
+                TextCell(content=s.get("bot_id") or "N/A"),
+                TextCell(content=s["group_id"] or "全局"),
+                TextCell(content=s["next_run_time"]),
+                TextCell(content=_format_trigger_info(s)),
+                TextCell(content=_format_params(s)),
+                status_cell,
+            ]
+        )
 
     if not data_list:
         return "没有找到任何相关的定时任务。"
 
-    return await ImageTemplate.table_page(
-        head_text=title,
-        tip_text=f"第 {current_page}/{total_pages} 页，共 {total_items} 条任务",
-        column_name=["ID", "插件", "Bot", "目标", "下次运行", "规则", "参数", "状态"],
-        data_list=data_list,
-        column_space=20,
-        text_style=_status_row_style,
+    builder = TableBuilder(
+        title, f"第 {current_page}/{total_pages} 页，共 {total_items} 条任务"
+    )
+    builder.set_headers(
+        ["ID", "插件", "Bot", "目标", "下次运行", "规则", "参数", "状态"]
+    ).add_rows(data_list)
+    return await ui.render(
+        builder.build(),
+        viewport={"width": 1400, "height": 10},
+        device_scale_factor=2,
     )
 
 

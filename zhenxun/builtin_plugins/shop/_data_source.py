@@ -22,8 +22,8 @@ from zhenxun.models.user_console import UserConsole
 from zhenxun.models.user_gold_log import UserGoldLog
 from zhenxun.models.user_props_log import UserPropsLog
 from zhenxun.services.log import logger
+from zhenxun.ui.models import ImageCell, TextCell
 from zhenxun.utils.enum import GoldHandle, PropHandle
-from zhenxun.utils.image_utils import BuildImage, ImageTemplate
 from zhenxun.utils.platform import PlatformUtils
 from zhenxun.utils.pydantic_compat import model_dump
 
@@ -92,9 +92,7 @@ class ShopParam(BaseModel):
         return model_dump(self, **kwargs)
 
 
-async def gold_rank(
-    session: Uninfo, group_id: str | None, num: int
-) -> BuildImage | str:
+async def gold_rank(session: Uninfo, group_id: str | None, num: int) -> bytes | str:
     query = UserConsole
     if group_id:
         uid_list = await GroupInfoUser.filter(group_id=group_id).values_list(
@@ -125,16 +123,18 @@ async def gold_rank(
     data_list = []
     platform = PlatformUtils.get_platform(session)
     for i, user in enumerate(user_list):
-        ava_bytes = await PlatformUtils.get_user_avatar(
-            user[0], platform, session.self_id
-        )
+        ava_url = PlatformUtils.get_user_avatar_url(user[0], platform, session.self_id)
         data_list.append(
             [
-                f"{i + 1}",
-                (ava_bytes, 30, 30) if platform == "qq" else "",
-                uid2name.get(user[0]),
-                user[1],
-                (PLATFORM_PATH.get(platform), 30, 30),
+                TextCell(content=f"{i + 1}"),
+                ImageCell(src=ava_url or "", shape="circle")
+                if platform == "qq"
+                else TextCell(content=""),
+                TextCell(content=uid2name.get(user[0]) or user[0]),
+                TextCell(content=str(user[1]), bold=True),
+                ImageCell(src=platform_path.resolve().as_uri())
+                if (platform_path := PLATFORM_PATH.get(platform))
+                else TextCell(content=""),
             ]
         )
     if group_id:
@@ -143,7 +143,11 @@ async def gold_rank(
     else:
         title = "金币全局排行"
         tip = f"你的排名在全局第 {index} 位哦!"
-    return await ImageTemplate.table_page(title, tip, column_name, data_list)
+    from zhenxun.ui.builders import TableBuilder
+
+    builder = TableBuilder(title, tip)
+    builder.set_headers(column_name).add_rows(data_list)
+    return await ui.render(builder.build())
 
 
 class ShopManage:
@@ -493,7 +497,7 @@ class ShopManage:
     @classmethod
     async def my_props(
         cls, user_id: str, name: str, platform: str | None = None
-    ) -> BuildImage | None:
+    ) -> bytes | None:
         """获取道具背包
 
         参数:
@@ -544,12 +548,11 @@ class ShopManage:
             return None
 
         column_name = ["-", "使用ID", "名称", "数量", "简介"]
-        return await ImageTemplate.table_page(
-            f"{name}的道具仓库",
-            "通过 使用道具[ID/名称] 令道具生效",
-            column_name,
-            table_rows,
-        )
+        from zhenxun.ui.builders import TableBuilder
+
+        builder = TableBuilder(f"{name}的道具仓库", "通过 使用道具[ID/名称] 令道具生效")
+        builder.set_headers(column_name).add_rows(table_rows)
+        return await ui.render(builder.build())
 
     @classmethod
     async def my_cost(cls, user_id: str, platform: str | None = None) -> int:
