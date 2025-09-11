@@ -12,11 +12,15 @@ class UserInfoBlock(RenderableComponent):
 
     component_type: Literal["user_info_block"] = "user_info_block"
     avatar_url: str = Field(..., description="用户头像的URL")
+    """用户头像的URL"""
     name: str = Field(..., description="用户的名称")
+    """用户的名称"""
     subtitle: str | None = Field(
         default=None, description="显示在名称下方的副标题 (如UID或角色)"
     )
+    """显示在名称下方的副标题 (如UID或角色)"""
     tags: list[str] = Field(default_factory=list, description="附加的标签列表")
+    """附加的标签列表"""
 
     @property
     def template_name(self) -> str:

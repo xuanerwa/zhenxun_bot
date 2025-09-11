@@ -23,9 +23,11 @@ class TextData(RenderableComponent):
     """轻量级富文本组件的数据模型"""
 
     spans: list[TextSpan] = Field(default_factory=list, description="文本片段列表")
+    """文本片段列表"""
     align: Literal["left", "right", "center"] = Field(
         "left", description="整体文本对齐方式"
     )
+    """整体文本对齐方式"""
 
     @property
     def template_name(self) -> str:

@@ -12,20 +12,26 @@ class LayoutItem(BaseModel):
     """布局中的单个项目，现在持有可渲染组件的数据模型"""
 
     component: RenderableComponent = Field(..., description="要渲染的组件的数据模型")
+    """要渲染的组件的数据模型"""
     metadata: dict[str, Any] | None = Field(None, description="传递给模板的额外元数据")
+    """传递给模板的额外元数据"""
 
 
 class LayoutData(ContainerComponent):
     """布局构建器的数据模型"""
 
     style_name: str | None = None
+    """应用于布局容器的样式名称"""
     layout_type: str = "column"
+    """布局类型 (如 'column', 'row', 'grid')"""
     children: list[LayoutItem] = Field(
         default_factory=list, description="要布局的项目列表"
     )
+    """要布局的项目列表"""
     options: dict[str, Any] = Field(
         default_factory=dict, description="传递给模板的选项"
     )
+    """传递给模板的选项"""
 
     @property
     def template_name(self) -> str:

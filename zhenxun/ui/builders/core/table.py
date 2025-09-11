@@ -1,6 +1,13 @@
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
-from ...models.core.table import TableCell, TableData
+from ...models.core.table import (
+    BaseCell,
+    ImageCell,
+    TableCell,
+    TableData,
+    TextCell,
+)
 from ..base import BaseBuilder
 
 __all__ = ["TableBuilder"]
@@ -12,6 +19,28 @@ class TableBuilder(BaseBuilder[TableData]):
     def __init__(self, title: str, tip: str | None = None):
         data_model = TableData(title=title, tip=tip, headers=[], rows=[])
         super().__init__(data_model, template_name="components/core/table")
+
+    def _normalize_cell(self, cell_data: Any) -> TableCell:
+        """内部辅助方法，将各种原生数据类型转换为TableCell模型。"""
+        if isinstance(cell_data, BaseCell):
+            return cell_data  # type: ignore
+        if isinstance(cell_data, str | int | float):
+            return TextCell(content=str(cell_data))
+        if isinstance(cell_data, Path):
+            return ImageCell(src=cell_data.resolve().as_uri())
+        if isinstance(cell_data, tuple) and len(cell_data) == 3:
+            if (
+                isinstance(cell_data[0], Path)
+                and isinstance(cell_data[1], int)
+                and isinstance(cell_data[2], int)
+            ):
+                return ImageCell(
+                    src=cell_data[0].resolve().as_uri(),
+                    width=cell_data[1],
+                    height=cell_data[2],
+                )
+
+        return TextCell(content="")
 
     def set_headers(self, headers: list[str]) -> "TableBuilder":
         """
@@ -57,12 +86,13 @@ class TableBuilder(BaseBuilder[TableData]):
         返回:
             TableBuilder: 当前构建器实例，以支持链式调用。
         """
-        self._data.rows.append(row)
+        normalized_row = [self._normalize_cell(cell) for cell in row]
+        self._data.rows.append(normalized_row)
         return self
 
     def add_rows(self, rows: list[list[TableCell]]) -> "TableBuilder":
         """
-        向表格中批量添加多行数据。
+        向表格中批量添加多行数据, 并自动转换原生类型。
 
         参数:
             rows: 一个包含多行数据的列表。
@@ -70,5 +100,6 @@ class TableBuilder(BaseBuilder[TableData]):
         返回:
             TableBuilder: 当前构建器实例，以支持链式调用。
         """
-        self._data.rows.extend(rows)
+        for row in rows:
+            self.add_row(row)
         return self

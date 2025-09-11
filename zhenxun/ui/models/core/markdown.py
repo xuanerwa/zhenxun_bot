@@ -44,7 +44,9 @@ class TextElement(MarkdownElement):
 class HeadingElement(MarkdownElement):
     type: Literal["heading"] = "heading"
     text: str
-    level: int = Field(..., ge=1, le=6)
+    """标题文本"""
+    level: int = Field(..., ge=1, le=6, description="标题级别 (1-6)")
+    """标题级别 (1-6)"""
 
     def to_markdown(self) -> str:
         return f"{'#' * self.level} {self.text}"
@@ -53,7 +55,9 @@ class HeadingElement(MarkdownElement):
 class ImageElement(MarkdownElement):
     type: Literal["image"] = "image"
     src: str
+    """图片来源 (URL或data URI)"""
     alt: str = "image"
+    """图片的替代文本"""
 
     def to_markdown(self) -> str:
         return f"![{self.alt}]({self.src})"
@@ -62,7 +66,9 @@ class ImageElement(MarkdownElement):
 class CodeElement(MarkdownElement):
     type: Literal["code"] = "code"
     code: str
+    """代码字符串"""
     language: str = ""
+    """代码语言，用于语法高亮"""
 
     def to_markdown(self) -> str:
         return f"```{self.language}\n{self.code}\n```"
@@ -71,6 +77,7 @@ class CodeElement(MarkdownElement):
 class RawHtmlElement(MarkdownElement):
     type: Literal["raw_html"] = "raw_html"
     html: str
+    """原始HTML字符串"""
 
     def to_markdown(self) -> str:
         return self.html
@@ -79,8 +86,11 @@ class RawHtmlElement(MarkdownElement):
 class TableElement(MarkdownElement):
     type: Literal["table"] = "table"
     headers: list[str]
+    """表格的表头列表"""
     rows: list[list[str]]
+    """表格的数据行列表"""
     alignments: list[Literal["left", "center", "right"]] | None = None
+    """每列的对齐方式"""
 
     def to_markdown(self) -> str:
         header_row = "| " + " | ".join(self.headers) + " |"
@@ -102,7 +112,10 @@ class TableElement(MarkdownElement):
 
 
 class ContainerElement(MarkdownElement):
-    content: list[MarkdownElement] = Field(default_factory=list)
+    content: list[MarkdownElement] = Field(
+        default_factory=list, description="容器内包含的Markdown元素列表"
+    )
+    """容器内包含的Markdown元素列表"""
 
 
 class QuoteElement(ContainerElement):
@@ -121,6 +134,7 @@ class ListItemElement(ContainerElement):
 class ListElement(ContainerElement):
     type: Literal["list"] = "list"
     ordered: bool = False
+    """是否为有序列表 (例如 1., 2.)"""
 
     def to_markdown(self) -> str:
         lines = []
@@ -137,6 +151,7 @@ class ComponentElement(MarkdownElement):
 
     type: Literal["component"] = "component"
     component: RenderableComponent
+    """嵌入在Markdown中的可渲染组件"""
 
     def to_markdown(self) -> str:
         return ""
@@ -146,9 +161,15 @@ class MarkdownData(ContainerComponent):
     """Markdown转图片的数据模型"""
 
     style_name: str | None = None
-    elements: list[MarkdownElement] = Field(default_factory=list)
+    """Markdown内容的样式名称"""
+    elements: list[MarkdownElement] = Field(
+        default_factory=list, description="构成Markdown文档的元素列表"
+    )
+    """构成Markdown文档的元素列表"""
     width: int = 800
+    """最终渲染图片的宽度"""
     css_path: str | None = None
+    """自定义CSS文件的绝对路径"""
 
     @property
     def template_name(self) -> str:
@@ -180,7 +201,6 @@ class MarkdownData(ContainerComponent):
                 logger.warning(f"Markdown自定义CSS文件不存在: {self.css_path}")
         else:
             style_name = self.style_name or "light"
-            # 使用上下文对象来解析路径
             css_path = await context.theme_manager.resolve_markdown_style_path(
                 style_name, context
             )

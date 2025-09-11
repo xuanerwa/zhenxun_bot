@@ -91,7 +91,7 @@ class SignManage:
                     TextCell(content=uid2name.get(user[0]) or user[0]),
                     TextCell(content=str(user[1]), bold=True),
                     TextCell(content=str(user[2])),
-                    ImageCell(src=platform_path)
+                    ImageCell(src=platform_path.resolve().as_uri())
                     if (platform_path := PLATFORM_PATH.get(platform))
                     else TextCell(content=""),
                 ]

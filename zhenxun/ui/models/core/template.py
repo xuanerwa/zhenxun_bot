@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Any
 
+from pydantic import Field
+
 from .base import RenderableComponent
 
 __all__ = ["TemplateComponent"]
@@ -10,8 +12,11 @@ class TemplateComponent(RenderableComponent):
     """基于独立模板文件的UI组件"""
 
     _is_standalone_template: bool = True
-    template_path: str | Path
-    data: dict[str, Any]
+    """标记此组件为独立模板"""
+    template_path: str | Path = Field(..., description="指向HTML模板文件的路径")
+    """指向HTML模板文件的路径"""
+    data: dict[str, Any] = Field(..., description="传递给模板的上下文数据字典")
+    """传递给模板的上下文数据字典"""
 
     @property
     def template_name(self) -> str:

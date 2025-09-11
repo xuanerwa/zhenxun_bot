@@ -7,8 +7,11 @@ class CardData(ContainerComponent):
     """通用卡片的数据模型，可以包含头部、内容和尾部"""
 
     header: RenderableComponent | None = None
+    """卡片的头部内容组件"""
     content: RenderableComponent
+    """卡片的主要内容组件"""
     footer: RenderableComponent | None = None
+    """卡片的尾部内容组件"""
 
     @property
     def template_name(self) -> str:

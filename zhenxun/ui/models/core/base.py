@@ -20,10 +20,15 @@ class RenderableComponent(BaseModel, Renderable):
     """
 
     _is_standalone_template: bool = False
+    """标记此组件是否为独立模板"""
     inline_style: dict[str, str] | None = None
+    """应用于组件根元素的内联CSS样式"""
     component_css: str | None = None
+    """注入到页面的额外CSS字符串"""
     extra_classes: list[str] | None = None
+    """应用于组件根元素的额外CSS类名列表"""
     variant: str | None = None
+    """组件的变体/皮肤名称"""
 
     @property
     def template_name(self) -> str:

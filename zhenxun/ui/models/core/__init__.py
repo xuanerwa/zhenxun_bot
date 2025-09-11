@@ -24,6 +24,7 @@ from .markdown import (
 from .notebook import NotebookData, NotebookElement
 from .table import (
     BaseCell,
+    ComponentCell,
     ImageCell,
     RichTextCell,
     StatusBadgeCell,
@@ -38,6 +39,7 @@ __all__ = [
     "BaseCell",
     "CardData",
     "CodeElement",
+    "ComponentCell",
     "DetailsData",
     "DetailsItem",
     "HeadingElement",

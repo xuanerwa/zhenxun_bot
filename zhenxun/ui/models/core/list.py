@@ -12,6 +12,7 @@ class ListItem(BaseModel):
     """列表中的单个项目，其内容可以是任何可渲染组件。"""
 
     component: RenderableComponent = Field(..., description="要渲染的组件的数据模型")
+    """要渲染的组件的数据模型"""
 
 
 class ListData(ContainerComponent):
@@ -19,7 +20,9 @@ class ListData(ContainerComponent):
 
     component_type: Literal["list"] = "list"
     items: list[ListItem] = Field(default_factory=list, description="列表项目")
+    """列表项目"""
     ordered: bool = Field(default=False, description="是否为有序列表")
+    """是否为有序列表"""
 
     @property
     def template_name(self) -> str:

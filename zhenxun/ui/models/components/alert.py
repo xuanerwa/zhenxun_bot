@@ -14,9 +14,13 @@ class Alert(RenderableComponent):
     type: Literal["info", "success", "warning", "error"] = Field(
         default="info", description="提示框的类型，决定了颜色和图标"
     )
+    """提示框的类型，决定了颜色和图标"""
     title: str = Field(..., description="提示框的标题")
+    """提示框的标题"""
     content: str = Field(..., description="提示框的主要内容")
+    """提示框的主要内容"""
     show_icon: bool = Field(default=True, description="是否显示与类型匹配的图标")
+    """是否显示与类型匹配的图标"""
 
     @property
     def template_name(self) -> str:

@@ -11,44 +11,68 @@ from .core.base import RenderableComponent
 
 class EChartsTitle(BaseModel):
     text: str
+    """图表主标题"""
     left: Literal["left", "center", "right"] = "center"
+    """标题水平对齐方式"""
 
 
 class EChartsAxis(BaseModel):
     type: Literal["category", "value", "time", "log"]
+    """坐标轴类型"""
     data: list[Any] | None = None
+    """类目数据"""
     show: bool = True
+    """是否显示坐标轴"""
 
 
 class EChartsSeries(BaseModel):
     type: str
+    """系列类型 (e.g., 'bar', 'line', 'pie')"""
     data: list[Any]
+    """系列数据"""
     name: str | None = None
+    """系列名称，用于 tooltip 的显示"""
     label: dict[str, Any] | None = None
+    """图形上的文本标签"""
     itemStyle: dict[str, Any] | None = None
+    """图形样式"""
     barMaxWidth: int | None = None
+    """柱条的最大宽度"""
     smooth: bool | None = None
+    """是否平滑显示折线"""
 
 
 class EChartsTooltip(BaseModel):
-    trigger: Literal["item", "axis", "none"] = "item"
+    trigger: Literal["item", "axis", "none"] = Field("item", description="触发类型")
+    """触发类型"""
 
 
 class EChartsGrid(BaseModel):
     left: str | None = None
+    """grid 组件离容器左侧的距离"""
     right: str | None = None
+    """grid 组件离容器右侧的距离"""
     top: str | None = None
+    """grid 组件离容器上侧的距离"""
     bottom: str | None = None
+    """grid 组件离容器下侧的距离"""
     containLabel: bool = True
+    """grid 区域是否包含坐标轴的刻度标签"""
 
 
 class BaseChartData(RenderableComponent, ABC):
     """所有图表数据模型的基类"""
 
     style_name: str | None = None
-    chart_id: str = Field(default_factory=lambda: f"chart-{uuid.uuid4().hex}")
+    """组件的样式名称"""
+    chart_id: str = Field(
+        default_factory=lambda: f"chart-{uuid.uuid4().hex}",
+        description="图表的唯一ID，用于前端渲染",
+    )
+    """图表的唯一ID，用于前端渲染"""
 
     echarts_options: dict[str, Any] | None = None
+    """原始ECharts选项，用于高级自定义"""
 
     @abstractmethod
     def build_option(self) -> dict[str, Any]:
@@ -70,21 +94,37 @@ class BaseChartData(RenderableComponent, ABC):
 class EChartsData(BaseChartData):
     """统一的 ECharts 图表数据模型"""
 
-    template_path: str = Field(..., exclude=True)
-    title_model: EChartsTitle | None = Field(None, alias="title")
-    grid_model: EChartsGrid | None = Field(None, alias="grid")
-    tooltip_model: EChartsTooltip | None = Field(None, alias="tooltip")
-    x_axis_model: EChartsAxis | None = Field(None, alias="xAxis")
-    y_axis_model: EChartsAxis | None = Field(None, alias="yAxis")
-    series_models: list[EChartsSeries] = Field(default_factory=list, alias="series")
-    legend_model: dict[str, Any] | None = Field(default_factory=dict, alias="legend")
+    template_path: str = Field(..., exclude=True, description="图表组件的模板路径")
+    """图表组件的模板路径"""
+    title_model: EChartsTitle | None = Field(
+        None, alias="title", description="标题组件"
+    )
+    """标题组件"""
+    grid_model: EChartsGrid | None = Field(None, alias="grid", description="网格组件")
+    """网格组件"""
+    tooltip_model: EChartsTooltip | None = Field(
+        None, alias="tooltip", description="提示框组件"
+    )
+    """提示框组件"""
+    x_axis_model: EChartsAxis | None = Field(None, alias="xAxis", description="X轴配置")
+    """X轴配置"""
+    y_axis_model: EChartsAxis | None = Field(None, alias="yAxis", description="Y轴配置")
+    """Y轴配置"""
+    series_models: list[EChartsSeries] = Field(
+        default_factory=list, alias="series", description="系列列表"
+    )
+    """系列列表"""
+    legend_model: dict[str, Any] | None = Field(
+        default_factory=dict, alias="legend", description="图例组件"
+    )
+    """图例组件"""
     raw_options: dict[str, Any] = Field(
         default_factory=dict, description="用于 set_option 的原始覆盖选项"
     )
+    """用于 set_option 的原始覆盖选项"""
 
-    background_image: str | None = Field(
-        None, description="【兼容】用于横向柱状图的背景图片"
-    )
+    background_image: str | None = Field(None, description="用于横向柱状图的背景图片")
+    """用于横向柱状图的背景图片"""
 
     def build_option(self) -> dict[str, Any]:
         """将 Pydantic 模型序列化为 ECharts 的 option 字典。"""

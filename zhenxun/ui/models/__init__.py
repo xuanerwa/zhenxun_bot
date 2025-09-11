@@ -12,6 +12,7 @@ from .components import (
 from .core import (
     BaseCell,
     CodeElement,
+    ComponentCell,
     HeadingElement,
     ImageCell,
     ImageElement,
@@ -49,6 +50,7 @@ __all__ = [
     "BaseCell",
     "BaseChartData",
     "CodeElement",
+    "ComponentCell",
     "Divider",
     "EChartsData",
     "HeadingElement",
