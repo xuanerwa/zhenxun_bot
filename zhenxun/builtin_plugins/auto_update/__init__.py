@@ -84,13 +84,16 @@ async def _(
 ):
     result = ""
     await MessageUtils.build_message("正在进行检查更新...").send(reply_to=True)
+
+    if not ver_type.available:
+        result += await UpdateManager.check_version()
+        logger.info("查看当前版本...", "检查更新", session=session)
+        await MessageUtils.build_message(result).finish()
+        return
+
     ver_type_str = ver_type.result
     source_str = source.result
     if ver_type_str in {"main", "release"}:
-        if not ver_type.available:
-            result += await UpdateManager.check_version()
-            logger.info("查看当前版本...", "检查更新", session=session)
-            await MessageUtils.build_message(result).finish()
         try:
             result += await UpdateManager.update_zhenxun(
                 bot,
