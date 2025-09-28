@@ -287,7 +287,7 @@ class StoreManager:
             files = [RepoFileInfo(path=f"{replace_module_path}.py", is_dir=False)]
         if not is_external:
             target_dir = BASE_PATH
-        elif is_dir:
+        elif is_dir and module_path == ".":
             target_dir = BASE_PATH / "plugins" / plugin_name
         else:
             target_dir = BASE_PATH / "plugins"
