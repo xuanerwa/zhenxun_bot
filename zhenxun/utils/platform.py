@@ -247,7 +247,7 @@ class PlatformUtils:
         if platform != "qq":
             return None
         if user_id.isdigit():
-            return f"http://q1.qlogo.cn/g?b=qq&nk={user_id}&s=160"
+            return f"http://q1.qlogo.cn/g?b=qq&nk={user_id}&s=640"
         else:
             return f"https://q.qlogo.cn/qqapp/{appid}/{user_id}/640"
 

@@ -13,6 +13,7 @@ from zhenxun.models.group_member_info import GroupInfoUser
 from zhenxun.models.sign_log import SignLog
 from zhenxun.models.sign_user import SignUser
 from zhenxun.models.user_console import UserConsole
+from zhenxun.services.avatar_service import avatar_service
 from zhenxun.services.log import logger
 from zhenxun.ui.models import ImageCell, TextCell
 from zhenxun.utils.platform import PlatformUtils
@@ -79,14 +80,16 @@ class SignManage:
         data_list = []
         platform = PlatformUtils.get_platform(session)
         for i, user in enumerate(user_list):
-            ava_url = PlatformUtils.get_user_avatar_url(
-                user[0], platform, session.self_id
+            avatar_path = await avatar_service.get_avatar_path(
+                platform=user[3] or "qq", identifier=user[0]
             )
             data_list.append(
                 [
                     TextCell(content=f"{i + 1}"),
-                    ImageCell(src=ava_url or "", shape="circle")
-                    if user[3] == "qq"
+                    ImageCell(
+                        src=avatar_path.as_uri() if avatar_path else "", shape="circle"
+                    )
+                    if avatar_path
                     else TextCell(content=""),
                     TextCell(content=uid2name.get(user[0]) or user[0]),
                     TextCell(content=str(user[1]), bold=True),

@@ -11,6 +11,7 @@ from zhenxun.models.level_user import LevelUser
 from zhenxun.models.sign_user import SignUser
 from zhenxun.models.statistics import Statistics
 from zhenxun.models.user_console import UserConsole
+from zhenxun.services import avatar_service
 from zhenxun.utils.platform import PlatformUtils
 
 RACE = [
@@ -139,9 +140,8 @@ async def get_user_info(
         bytes: 图片数据
     """
     platform = PlatformUtils.get_platform(session) or "qq"
-    avatar_url = (
-        PlatformUtils.get_user_avatar_url(user_id, platform, session.self_id) or ""
-    )
+    avatar_path = await avatar_service.get_avatar_path(platform, user_id)
+    avatar_url = avatar_path.as_uri() if avatar_path else ""
 
     user = await UserConsole.get_user(user_id, platform)
     permission_level = await LevelUser.get_user_level(user_id, group_id)

@@ -11,6 +11,7 @@ from nonebot_plugin_uninfo import Uninfo
 from zhenxun import ui
 from zhenxun.configs.config import BotConfig, Config
 from zhenxun.models.sign_user import SignUser
+from zhenxun.services import avatar_service
 from zhenxun.utils.manager.priority_manager import PriorityLifecycle
 from zhenxun.utils.platform import PlatformUtils
 
@@ -212,13 +213,13 @@ async def _generate_html_card(
     if len(nickname) > 6:
         font_size = 27
 
+    avatar_path = await avatar_service.get_avatar_path(
+        PlatformUtils.get_platform(session), user.user_id
+    )
     user_info = {
         "nickname": nickname,
         "uid_str": uid_formatted,
-        "avatar_url": PlatformUtils.get_user_avatar_url(
-            user.user_id, PlatformUtils.get_platform(session), session.self_id
-        )
-        or "",
+        "avatar_url": avatar_path.as_uri() if avatar_path else "",
         "sign_count": user.sign_count,
         "font_size": font_size,
     }

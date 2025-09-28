@@ -13,6 +13,7 @@ from zhenxun.models.statistics import Statistics
 from zhenxun.services import (
     LLMException,
     LLMMessage,
+    avatar_service,
     generate,
 )
 from zhenxun.services.log import logger
@@ -105,7 +106,8 @@ async def create_help_img(
 
     platform = PlatformUtils.get_platform(session)
     bot_id = BotConfig.get_qbot_uid(session.self_id) or session.self_id
-    bot_avatar_url = PlatformUtils.get_user_avatar_url(bot_id, platform) or ""
+    bot_avatar_path = await avatar_service.get_avatar_path(platform, bot_id)
+    bot_avatar_url = bot_avatar_path.as_uri() if bot_avatar_path else ""
 
     builder = PluginMenuBuilder(
         bot_name=BotConfig.self_nickname,

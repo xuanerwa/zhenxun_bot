@@ -21,6 +21,7 @@ from zhenxun.models.group_member_info import GroupInfoUser
 from zhenxun.models.user_console import UserConsole
 from zhenxun.models.user_gold_log import UserGoldLog
 from zhenxun.models.user_props_log import UserPropsLog
+from zhenxun.services import avatar_service
 from zhenxun.services.log import logger
 from zhenxun.ui.models import ImageCell, TextCell
 from zhenxun.utils.enum import GoldHandle, PropHandle
@@ -123,12 +124,14 @@ async def gold_rank(session: Uninfo, group_id: str | None, num: int) -> bytes | 
     data_list = []
     platform = PlatformUtils.get_platform(session)
     for i, user in enumerate(user_list):
-        ava_url = PlatformUtils.get_user_avatar_url(user[0], platform, session.self_id)
+        avatar_path = await avatar_service.get_avatar_path(platform, user[0])
         data_list.append(
             [
                 TextCell(content=f"{i + 1}"),
-                ImageCell(src=ava_url or "", shape="circle")
-                if platform == "qq"
+                ImageCell(
+                    src=avatar_path.as_uri() if avatar_path else "", shape="circle"
+                )
+                if avatar_path
                 else TextCell(content=""),
                 TextCell(content=uid2name.get(user[0]) or user[0]),
                 TextCell(content=str(user[1]), bold=True),

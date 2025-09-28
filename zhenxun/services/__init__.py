@@ -18,6 +18,7 @@ require("nonebot_plugin_htmlrender")
 require("nonebot_plugin_uninfo")
 require("nonebot_plugin_waiter")
 
+from .avatar_service import avatar_service
 from .db_context import Model, disconnect, with_db_timeout
 from .llm import (
     AI,
@@ -57,6 +58,7 @@ __all__ = [
     "Model",
     "PluginInit",
     "PluginInitManager",
+    "avatar_service",
     "chat",
     "clear_model_cache",
     "code",

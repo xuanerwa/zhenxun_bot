@@ -19,12 +19,12 @@ from zhenxun.configs.config import Config
 from zhenxun.configs.utils import Command, PluginExtraData, RegisterConfig
 from zhenxun.models.chat_history import ChatHistory
 from zhenxun.models.group_member_info import GroupInfoUser
+from zhenxun.services import avatar_service
 from zhenxun.services.log import logger
 from zhenxun.ui.builders import TableBuilder
 from zhenxun.ui.models import ImageCell, TextCell
 from zhenxun.utils.enum import PluginType
 from zhenxun.utils.message import MessageUtils
-from zhenxun.utils.platform import PlatformUtils
 
 __plugin_meta__ = PluginMetadata(
     name="消息统计",
@@ -147,12 +147,14 @@ async def _(
                 user_in_group.user_name if user_in_group else f"{uid_str}(已退群)"
             )
 
-            avatar_url = PlatformUtils.get_user_avatar_url(uid_str, platform)
+            avatar_path = await avatar_service.get_avatar_path(platform, uid_str)
 
             rows_data.append(
                 [
                     TextCell(content=str(len(rows_data) + 1)),
-                    ImageCell(src=avatar_url or "", shape="circle"),
+                    ImageCell(
+                        src=avatar_path.as_uri() if avatar_path else "", shape="circle"
+                    ),
                     TextCell(content=user_name),
                     TextCell(content=str(num), bold=True),
                 ]
