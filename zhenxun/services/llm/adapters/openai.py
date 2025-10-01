@@ -21,7 +21,14 @@ class OpenAIAdapter(OpenAICompatAdapter):
 
     @property
     def supported_api_types(self) -> list[str]:
-        return ["openai", "deepseek", "zhipu", "general_openai_compat", "ark"]
+        return [
+            "openai",
+            "deepseek",
+            "zhipu",
+            "general_openai_compat",
+            "ark",
+            "openrouter",
+        ]
 
     def get_chat_endpoint(self, model: "LLMModel") -> str:
         """返回聊天完成端点"""

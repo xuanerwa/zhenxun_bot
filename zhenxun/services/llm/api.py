@@ -2,7 +2,8 @@
 LLM 服务的高级 API 接口 - 便捷函数入口 (无状态)
 """
 
-from typing import Any, TypeVar
+from pathlib import Path
+from typing import Any, TypeVar, overload
 
 from nonebot_plugin_alconna.uniseg import UniMessage
 from pydantic import BaseModel
@@ -10,7 +11,7 @@ from pydantic import BaseModel
 from zhenxun.services.log import logger
 
 from .config import CommonOverrides
-from .config.generation import create_generation_config_from_kwargs
+from .config.generation import LLMGenerationConfig, create_generation_config_from_kwargs
 from .manager import get_model_instance
 from .session import AI
 from .tools.manager import tool_provider_manager
@@ -23,6 +24,7 @@ from .types import (
     LLMResponse,
     ModelName,
 )
+from .utils import create_multimodal_message
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -303,3 +305,99 @@ async def run_with_tools(
     raise LLMException(
         "带工具的执行循环未能产生有效的助手回复。", code=LLMErrorCode.GENERATION_FAILED
     )
+
+
+async def _generate_image_from_message(
+    message: UniMessage,
+    model: ModelName = None,
+    **kwargs: Any,
+) -> LLMResponse:
+    """
+    [内部] 从 UniMessage 生成图片的核心辅助函数。
+    """
+    from .utils import normalize_to_llm_messages
+
+    config = (
+        create_generation_config_from_kwargs(**kwargs)
+        if kwargs
+        else LLMGenerationConfig()
+    )
+
+    config.validation_policy = {"require_image": True}
+    config.response_modalities = ["IMAGE", "TEXT"]
+
+    try:
+        messages = await normalize_to_llm_messages(message)
+
+        async with await get_model_instance(model) as model_instance:
+            if not model_instance.can_generate_images():
+                raise LLMException(
+                    f"模型 '{model_instance.provider_name}/{model_instance.model_name}'"
+                    f"不支持图片生成",
+                    code=LLMErrorCode.CONFIGURATION_ERROR,
+                )
+
+            response = await model_instance.generate_response(messages, config=config)
+
+            if not response.image_bytes:
+                error_text = response.text or "模型未返回图片数据。"
+                logger.warning(f"图片生成调用未返回图片，返回文本内容: {error_text}")
+
+            return response
+    except LLMException:
+        raise
+    except Exception as e:
+        logger.error(f"执行图片生成时发生未知错误: {e}", e=e)
+        raise LLMException(f"图片生成失败: {e}", cause=e)
+
+
+@overload
+async def create_image(
+    prompt: str | UniMessage,
+    *,
+    images: None = None,
+    model: ModelName = None,
+    **kwargs: Any,
+) -> LLMResponse:
+    """根据文本提示生成一张新图片。"""
+    ...
+
+
+@overload
+async def create_image(
+    prompt: str | UniMessage,
+    *,
+    images: list[Path | bytes | str] | Path | bytes | str,
+    model: ModelName = None,
+    **kwargs: Any,
+) -> LLMResponse:
+    """在给定图片的基础上，根据文本提示进行编辑或重新生成。"""
+    ...
+
+
+async def create_image(
+    prompt: str | UniMessage,
+    *,
+    images: list[Path | bytes | str] | Path | bytes | str | None = None,
+    model: ModelName = None,
+    **kwargs: Any,
+) -> LLMResponse:
+    """
+    智能图片生成/编辑函数。
+    - 如果 `images` 为 None，执行文生图。
+    - 如果提供了 `images`，执行图+文生图，支持多张图片输入。
+    """
+    text_prompt = (
+        prompt.extract_plain_text() if isinstance(prompt, UniMessage) else str(prompt)
+    )
+
+    image_list = []
+    if images:
+        if isinstance(images, list):
+            image_list.extend(images)
+        else:
+            image_list.append(images)
+
+    message = create_multimodal_message(text=text_prompt, images=image_list)
+
+    return await _generate_image_from_message(message, model=model, **kwargs)

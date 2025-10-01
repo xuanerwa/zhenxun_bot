@@ -44,6 +44,13 @@ GEMINI_CAPABILITIES = ModelCapabilities(
     supports_tool_calling=True,
 )
 
+GEMINI_IMAGE_GEN_CAPABILITIES = ModelCapabilities(
+    input_modalities={ModelModality.TEXT, ModelModality.IMAGE},
+    output_modalities={ModelModality.TEXT, ModelModality.IMAGE},
+    supports_tool_calling=True,
+)
+
+
 DOUBAO_ADVANCED_MULTIMODAL_CAPABILITIES = ModelCapabilities(
     input_modalities={ModelModality.TEXT, ModelModality.IMAGE, ModelModality.VIDEO},
     output_modalities={ModelModality.TEXT},
@@ -83,6 +90,7 @@ MODEL_CAPABILITIES_REGISTRY: dict[str, ModelCapabilities] = {
         output_modalities={ModelModality.EMBEDDING},
         is_embedding_model=True,
     ),
+    "*gemini-*-image-preview*": GEMINI_IMAGE_GEN_CAPABILITIES,
     "gemini-2.5-pro*": GEMINI_CAPABILITIES,
     "gemini-1.5-pro*": GEMINI_CAPABILITIES,
     "gemini-2.5-flash*": GEMINI_CAPABILITIES,

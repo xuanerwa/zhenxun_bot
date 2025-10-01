@@ -7,6 +7,7 @@ LLM 服务模块 - 公共 API 入口
 from .api import (
     chat,
     code,
+    create_image,
     embed,
     generate,
     generate_structured,
@@ -74,6 +75,7 @@ __all__ = [
     "chat",
     "clear_model_cache",
     "code",
+    "create_image",
     "create_multimodal_message",
     "embed",
     "function_tool",

@@ -3,6 +3,9 @@ LLM 适配器基类和通用数据结构
 """
 
 from abc import ABC, abstractmethod
+import base64
+import binascii
+import json
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
@@ -32,6 +35,7 @@ class ResponseData(BaseModel):
     """响应数据封装 - 支持所有高级功能"""
 
     text: str
+    image_bytes: bytes | None = None
     usage_info: dict[str, Any] | None = None
     raw_response: dict[str, Any] | None = None
     tool_calls: list[LLMToolCall] | None = None
@@ -242,6 +246,38 @@ class BaseAdapter(ABC):
             if content:
                 content = content.strip()
 
+            image_bytes: bytes | None = None
+            if content and content.startswith("{") and content.endswith("}"):
+                try:
+                    content_json = json.loads(content)
+                    if "b64_json" in content_json:
+                        image_bytes = base64.b64decode(content_json["b64_json"])
+                        content = "[图片已生成]"
+                    elif "data" in content_json and isinstance(
+                        content_json["data"], str
+                    ):
+                        image_bytes = base64.b64decode(content_json["data"])
+                        content = "[图片已生成]"
+
+                except (json.JSONDecodeError, KeyError, binascii.Error):
+                    pass
+            elif (
+                "images" in message
+                and isinstance(message["images"], list)
+                and message["images"]
+            ):
+                image_info = message["images"][0]
+                if image_info.get("type") == "image_url":
+                    image_url_obj = image_info.get("image_url", {})
+                    url_str = image_url_obj.get("url", "")
+                    if url_str.startswith("data:image/png;base64,"):
+                        try:
+                            b64_data = url_str.split(",", 1)[1]
+                            image_bytes = base64.b64decode(b64_data)
+                            content = content if content else "[图片已生成]"
+                        except (IndexError, binascii.Error) as e:
+                            logger.warning(f"解析OpenRouter Base64图片数据失败: {e}")
+
             parsed_tool_calls: list[LLMToolCall] | None = None
             if message_tool_calls := message.get("tool_calls"):
                 from ..types.models import LLMToolFunction
@@ -280,6 +316,7 @@ class BaseAdapter(ABC):
                 text=final_text,
                 tool_calls=parsed_tool_calls,
                 usage_info=usage_info,
+                image_bytes=image_bytes,
                 raw_response=response_json,
             )
 
@@ -450,6 +487,13 @@ class OpenAICompatAdapter(BaseAdapter):
         """准备高级请求 - OpenAI兼容格式"""
         url = self.get_api_url(model, self.get_chat_endpoint(model))
         headers = self.get_base_headers(api_key)
+        if model.api_type == "openrouter":
+            headers.update(
+                {
+                    "HTTP-Referer": "https://github.com/zhenxun-org/zhenxun_bot",
+                    "X-Title": "Zhenxun Bot",
+                }
+            )
         openai_messages = self.convert_messages_to_openai_format(messages)
 
         body = {

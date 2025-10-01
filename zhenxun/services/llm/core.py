@@ -50,8 +50,8 @@ class LLMHttpClient:
             async with self._lock:
                 if self._client is None or self._client.is_closed:
                     logger.debug(
-                        f"LLMHttpClient: Initializing new httpx.AsyncClient "
-                        f"with config: {self.config}"
+                        f"LLMHttpClient: 正在初始化新的 httpx.AsyncClient "
+                        f"配置: {self.config}"
                     )
                     headers = get_user_agent()
                     limits = httpx.Limits(
@@ -92,7 +92,7 @@ class LLMHttpClient:
                     )
         if self._client is None:
             raise LLMException(
-                "HTTP client failed to initialize.", LLMErrorCode.CONFIGURATION_ERROR
+                "HTTP 客户端初始化失败。", LLMErrorCode.CONFIGURATION_ERROR
             )
         return self._client
 
@@ -110,17 +110,17 @@ class LLMHttpClient:
         async with self._lock:
             if self._client and not self._client.is_closed:
                 logger.debug(
-                    f"LLMHttpClient: Closing with config: {self.config}. "
-                    f"Active requests: {self._active_requests}"
+                    f"LLMHttpClient: 正在关闭，配置: {self.config}. "
+                    f"活跃请求数: {self._active_requests}"
                 )
                 if self._active_requests > 0:
                     logger.warning(
-                        f"LLMHttpClient: Closing while {self._active_requests} "
-                        f"requests are still active."
+                        f"LLMHttpClient: 关闭时仍有 {self._active_requests} "
+                        f"个请求处于活跃状态。"
                     )
                 await self._client.aclose()
             self._client = None
-        logger.debug(f"LLMHttpClient for config {self.config} definitively closed.")
+        logger.debug(f"配置为 {self.config} 的 LLMHttpClient 已完全关闭。")
 
     @property
     def is_closed(self) -> bool:
@@ -145,20 +145,17 @@ class LLMHttpClientManager:
             client = self._clients.get(key)
             if client and not client.is_closed:
                 logger.debug(
-                    f"LLMHttpClientManager: Reusing existing LLMHttpClient "
-                    f"for key: {key}"
+                    f"LLMHttpClientManager: 复用现有的 LLMHttpClient 密钥: {key}"
                 )
                 return client
 
             if client and client.is_closed:
                 logger.debug(
-                    f"LLMHttpClientManager: Found a closed client for key {key}. "
-                    f"Creating a new one."
+                    f"LLMHttpClientManager: 发现密钥 {key} 对应的客户端已关闭。"
+                    f"正在创建新的客户端。"
                 )
 
-            logger.debug(
-                f"LLMHttpClientManager: Creating new LLMHttpClient for key: {key}"
-            )
+            logger.debug(f"LLMHttpClientManager: 为密钥 {key} 创建新的 LLMHttpClient")
             http_client_config = HttpClientConfig(
                 timeout=provider_config.timeout, proxy=provider_config.proxy
             )
@@ -169,8 +166,7 @@ class LLMHttpClientManager:
     async def shutdown(self):
         async with self._lock:
             logger.info(
-                f"LLMHttpClientManager: Shutting down. "
-                f"Closing {len(self._clients)} client(s)."
+                f"LLMHttpClientManager: 正在关闭。关闭 {len(self._clients)} 个客户端。"
             )
             close_tasks = [
                 client.close()
@@ -180,7 +176,7 @@ class LLMHttpClientManager:
             if close_tasks:
                 await asyncio.gather(*close_tasks, return_exceptions=True)
             self._clients.clear()
-        logger.info("LLMHttpClientManager: Shutdown complete.")
+        logger.info("LLMHttpClientManager: 关闭完成。")
 
 
 http_client_manager = LLMHttpClientManager()

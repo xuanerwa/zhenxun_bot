@@ -1,12 +1,12 @@
 from typing import Any
 
 from nonebot.adapters import Bot, Message
-from nonebot.adapters.onebot.v11 import MessageSegment
 
 from zhenxun.configs.config import Config
 from zhenxun.models.bot_message_store import BotMessageStore
 from zhenxun.services.log import logger
 from zhenxun.utils.enum import BotSentType
+from zhenxun.utils.log_sanitizer import sanitize_for_logging
 from zhenxun.utils.manager.message_manager import MessageManager
 from zhenxun.utils.platform import PlatformUtils
 
@@ -41,35 +41,6 @@ def replace_message(message: Message) -> str:
     return result
 
 
-def format_message_for_log(message: Message) -> str:
-    """
-    将消息对象转换为适合日志记录的字符串，对base64等长内容进行摘要处理。
-    """
-    if not isinstance(message, Message):
-        return str(message)
-
-    log_parts = []
-    for seg in message:
-        seg: MessageSegment
-        if seg.type == "text":
-            log_parts.append(seg.data.get("text", ""))
-        elif seg.type in ("image", "record", "video"):
-            file_info = seg.data.get("file", "")
-            if isinstance(file_info, str) and file_info.startswith("base64://"):
-                b64_data = file_info[9:]
-                data_size_bytes = (len(b64_data) * 3) / 4 - b64_data.count("=", -2)
-                log_parts.append(
-                    f"[{seg.type}: base64, size={data_size_bytes / 1024:.2f}KB]"
-                )
-            else:
-                log_parts.append(f"[{seg.type}]")
-        elif seg.type == "at":
-            log_parts.append(f"[@{seg.data.get('qq', 'unknown')}]")
-        else:
-            log_parts.append(f"[{seg.type}]")
-    return "".join(log_parts)
-
-
 @Bot.on_called_api
 async def handle_api_result(
     bot: Bot, exception: Exception | None, api: str, data: dict[str, Any], result: Any
@@ -82,7 +53,6 @@ async def handle_api_result(
     message: Message = data.get("message", "")
     message_type = data.get("message_type")
     try:
-        # 记录消息id
         if user_id and message_id:
             MessageManager.add(str(user_id), str(message_id))
             logger.debug(
@@ -108,7 +78,8 @@ async def handle_api_result(
             else replace_message(message),
             platform=PlatformUtils.get_platform(bot),
         )
-        logger.debug(f"消息发送记录，message: {format_message_for_log(message)}")
+        sanitized_message = sanitize_for_logging(message, context="nonebot_message")
+        logger.debug(f"消息发送记录，message: {sanitized_message}")
     except Exception as e:
         logger.warning(
             f"消息发送记录发生错误...data: {data}, result: {result}",

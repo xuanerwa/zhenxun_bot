@@ -273,54 +273,6 @@ def message_to_unimessage(message: PlatformMessage) -> UniMessage:
     return UniMessage(uni_segments)
 
 
-def _sanitize_request_body_for_logging(body: dict) -> dict:
-    """
-    净化请求体用于日志记录，移除大数据字段并添加摘要信息
-
-    参数:
-        body: 原始请求体字典。
-
-    返回:
-        dict: 净化后的请求体字典。
-    """
-    try:
-        sanitized_body = copy.deepcopy(body)
-
-        if "contents" in sanitized_body and isinstance(
-            sanitized_body["contents"], list
-        ):
-            for content_item in sanitized_body["contents"]:
-                if "parts" in content_item and isinstance(content_item["parts"], list):
-                    media_summary = []
-                    new_parts = []
-                    for part in content_item["parts"]:
-                        if "inlineData" in part and isinstance(
-                            part["inlineData"], dict
-                        ):
-                            data = part["inlineData"].get("data")
-                            if isinstance(data, str):
-                                mime_type = part["inlineData"].get(
-                                    "mimeType", "unknown"
-                                )
-                                media_summary.append(f"{mime_type} ({len(data)} chars)")
-                                continue
-                        new_parts.append(part)
-
-                    if media_summary:
-                        summary_text = (
-                            f"[多模态内容: {len(media_summary)}个文件 - "
-                            f"{', '.join(media_summary)}]"
-                        )
-                        new_parts.insert(0, {"text": summary_text})
-
-                    content_item["parts"] = new_parts
-
-        return sanitized_body
-    except Exception as e:
-        logger.warning(f"日志净化失败: {e}，将记录原始请求体。")
-        return body
-
-
 def sanitize_schema_for_llm(schema: Any, api_type: str) -> Any:
     """
     递归地净化 JSON Schema，移除特定 LLM API 不支持的关键字。

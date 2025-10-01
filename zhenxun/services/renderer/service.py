@@ -22,6 +22,7 @@ from zhenxun.configs.config import Config
 from zhenxun.configs.path_config import THEMES_PATH, UI_CACHE_PATH
 from zhenxun.services.log import logger
 from zhenxun.utils.exception import RenderingError
+from zhenxun.utils.log_sanitizer import sanitize_for_logging
 from zhenxun.utils.pydantic_compat import _dump_pydantic_obj
 
 from .config import RESERVED_TEMPLATE_KEYS
@@ -470,10 +471,7 @@ class RendererService:
             ) from e
 
     async def render(
-        self,
-        component: Renderable,
-        use_cache: bool = False,
-        **render_options,
+        self, component: Renderable, use_cache: bool = False, **render_options
     ) -> bytes:
         """
         统一的、多态的渲染入口，直接返回图片字节。
@@ -504,9 +502,12 @@ class RendererService:
         )
         result = await self._render_component(context)
         if Config.get_config("UI", "DEBUG_MODE") and result.html_content:
+            sanitized_html = sanitize_for_logging(
+                result.html_content, context="ui_html"
+            )
             logger.info(
                 f"--- [UI DEBUG] HTML for {component.__class__.__name__} ---\n"
-                f"{result.html_content}\n"
+                f"{sanitized_html}\n"
                 f"--- [UI DEBUG] End of HTML ---"
             )
         if result.image_bytes is None:

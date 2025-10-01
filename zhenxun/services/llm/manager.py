@@ -118,6 +118,7 @@ def get_default_api_base_for_type(api_type: str) -> str | None:
         "deepseek": "https://api.deepseek.com",
         "zhipu": "https://open.bigmodel.cn",
         "gemini": "https://generativelanguage.googleapis.com",
+        "openrouter": "https://openrouter.ai/api",
         "general_openai_compat": None,
     }
 

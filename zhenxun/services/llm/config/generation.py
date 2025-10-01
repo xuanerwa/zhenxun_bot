@@ -2,13 +2,15 @@
 LLM 生成配置相关类和函数
 """
 
+from collections.abc import Callable
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from zhenxun.services.log import logger
 from zhenxun.utils.pydantic_compat import model_dump
 
+from ..types import LLMResponse
 from ..types.enums import ResponseFormat
 from ..types.exceptions import LLMErrorCode, LLMException
 
@@ -63,6 +65,15 @@ class ModelConfigOverride(BaseModel):
     enable_caching: bool | None = Field(default=None, description="是否启用响应缓存")
 
     custom_params: dict[str, Any] | None = Field(default=None, description="自定义参数")
+
+    validation_policy: dict[str, Any] | None = Field(
+        default=None, description="声明式的响应验证策略 (例如: {'require_image': True})"
+    )
+    response_validator: Callable[[LLMResponse], None] | None = Field(
+        default=None, description="一个高级回调函数，用于验证响应，验证失败时应抛出异常"
+    )
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典，排除None值"""

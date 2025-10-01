@@ -2,6 +2,7 @@
 Gemini API 适配器
 """
 
+import base64
 from typing import TYPE_CHECKING, Any
 
 from zhenxun.services.log import logger
@@ -373,7 +374,16 @@ class GeminiAdapter(BaseAdapter):
         self.validate_response(response_json)
 
         try:
-            candidates = response_json.get("candidates", [])
+            if "image_generation" in response_json and isinstance(
+                response_json["image_generation"], dict
+            ):
+                candidates_source = response_json["image_generation"]
+            else:
+                candidates_source = response_json
+
+            candidates = candidates_source.get("candidates", [])
+            usage_info = response_json.get("usageMetadata")
+
             if not candidates:
                 logger.debug("Gemini响应中没有candidates。")
                 return ResponseData(text="", raw_response=response_json)
@@ -398,6 +408,7 @@ class GeminiAdapter(BaseAdapter):
             parts = content_data.get("parts", [])
 
             text_content = ""
+            image_bytes: bytes | None = None
             parsed_tool_calls: list["LLMToolCall"] | None = None
             thought_summary_parts = []
             answer_parts = []
@@ -409,6 +420,14 @@ class GeminiAdapter(BaseAdapter):
                     thought_summary_parts.append(part["thought"])
                 elif "thoughtSummary" in part:
                     thought_summary_parts.append(part["thoughtSummary"])
+                elif "inlineData" in part:
+                    inline_data = part["inlineData"]
+                    if "data" in inline_data:
+                        image_bytes = base64.b64decode(inline_data["data"])
+                        answer_parts.append(
+                            f"[图片已生成: {inline_data.get('mimeType', 'image')}]"
+                        )
+
                 elif "functionCall" in part:
                     if parsed_tool_calls is None:
                         parsed_tool_calls = []
@@ -475,6 +494,7 @@ class GeminiAdapter(BaseAdapter):
             return ResponseData(
                 text=text_content,
                 tool_calls=parsed_tool_calls,
+                image_bytes=image_bytes,
                 usage_info=usage_info,
                 raw_response=response_json,
                 grounding_metadata=grounding_metadata_obj,
