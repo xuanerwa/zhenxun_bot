@@ -27,5 +27,8 @@ async def with_db_timeout(
         return result
     except asyncio.TimeoutError:
         if operation:
-            logger.error(f"数据库操作超时: {operation} (>{timeout}s)", LOG_COMMAND)
+            logger.error(
+                f"数据库操作超时: {operation} (>{timeout}s) 来源: {source}",
+                LOG_COMMAND,
+            )
         raise
