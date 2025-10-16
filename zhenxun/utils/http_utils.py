@@ -263,6 +263,18 @@ class AsyncHttpx:
                     )
                 return result
             except Exception as e:
+                if isinstance(e, HTTPStatusError):
+                    status = getattr(e.response, "status_code", "?")
+                    try:
+                        body_text = getattr(e.response, "text", None)
+                        if body_text is not None and len(body_text) > 2000:
+                            body_text = body_text[:2000] + "...(truncated)"
+                    except Exception:
+                        body_text = "<unavailable>"
+                    logger.debug(
+                        f"请求失败: {url} {status} {body_text}",
+                        "AsyncHttpx:FallbackExecutor",
+                    )
                 exceptions.append(e)
                 if url != url_list[-1]:
                     logger.warning(
