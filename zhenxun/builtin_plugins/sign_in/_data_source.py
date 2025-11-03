@@ -175,7 +175,7 @@ class SignManage:
         impression_added = (secrets.randbelow(99) + 1) / 100
         rand = random.random()
         add_probability = float(user.add_probability)
-        specify_probability = user.specify_probability
+        specify_probability = float(user.specify_probability)
         if rand + add_probability > 0.97 or rand < specify_probability:
             impression_added *= 2
         await SignUser.sign(user, impression_added, session.self_id, platform)
