@@ -192,11 +192,15 @@ class MarkdownData(ContainerComponent):
         yield from find_components_recursive(self.elements)
 
     async def get_extra_css(self, context: Any) -> str:
+        css_parts = []
+        if self.component_css:
+            css_parts.append(self.component_css)
+
         if self.css_path:
             css_file = Path(self.css_path)
             if css_file.is_file():
                 async with aiofiles.open(css_file, encoding="utf-8") as f:
-                    return await f.read()
+                    css_parts.append(await f.read())
             else:
                 logger.warning(f"Markdown自定义CSS文件不存在: {self.css_path}")
         else:
@@ -206,5 +210,6 @@ class MarkdownData(ContainerComponent):
             )
             if css_path and css_path.exists():
                 async with aiofiles.open(css_path, encoding="utf-8") as f:
-                    return await f.read()
-        return ""
+                    css_parts.append(await f.read())
+
+        return "\n".join(css_parts)

@@ -48,13 +48,13 @@ class TimeUtils:
     @classmethod
     def parse_time_string(cls, time_str: str) -> int:
         """
-        将带有单位的时间字符串 (e.g., "10s", "5m", "1h") 解析为总秒数。
+        将带有单位的时间字符串 (e.g., "10s", "5m", "1h", "1d") 解析为总秒数。
         """
         time_str = time_str.lower().strip()
-        match = re.match(r"^(\d+)([smh])$", time_str)
+        match = re.match(r"^(\d+)([smhd])$", time_str)
         if not match:
             raise ValueError(
-                f"无效的时间格式: '{time_str}'。请使用如 '30s', '10m', '2h' 的格式。"
+                f"无效的时间格式: '{time_str}'。请使用如 '30s', '10m', '2h', '1d'的格式"
             )
 
         value, unit = int(match.group(1)), match.group(2)
@@ -65,7 +65,33 @@ class TimeUtils:
             return value * 60
         if unit == "h":
             return value * 3600
+        if unit == "d":
+            return value * 86400
         return 0
+
+    @classmethod
+    def parse_interval_to_dict(cls, interval_str: str) -> dict:
+        """
+        将时间间隔字符串解析为 APScheduler 的 interval 触发器所需的字典。
+        """
+        time_str_lower = interval_str.lower().strip()
+        match = re.match(r"^(\d+)([smhd])$", time_str_lower)
+        if not match:
+            raise ValueError(
+                "时间间隔格式错误, 请使用如 '30m', '2h', '1d', '10s' 的格式。"
+            )
+
+        value, unit = int(match.group(1)), match.group(2)
+
+        if unit == "s":
+            return {"seconds": value}
+        if unit == "m":
+            return {"minutes": value}
+        if unit == "h":
+            return {"hours": value}
+        if unit == "d":
+            return {"days": value}
+        return {}
 
     @classmethod
     def format_duration(cls, seconds: float) -> str:

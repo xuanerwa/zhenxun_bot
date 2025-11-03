@@ -27,6 +27,7 @@ __all__ = [
     "model_copy",
     "model_dump",
     "model_json_schema",
+    "model_validate",
     "parse_as",
 ]
 
@@ -42,6 +43,16 @@ def model_copy(
     else:
         update_dict = update or {}
         return model.copy(update=update_dict, deep=deep)
+
+
+def model_validate(model_class: type[T], obj: Any) -> T:
+    """
+    Pydantic `model_validate` (v2) 与 `parse_obj` (v1) 的兼容函数。
+    """
+    if PYDANTIC_V2:
+        return model_class.model_validate(obj)
+    else:
+        return model_class.parse_obj(obj)
 
 
 if PYDANTIC_V2:

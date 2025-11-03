@@ -64,9 +64,9 @@ class ScheduleRepository:
     async def get_by_plugin_and_group(
         plugin_name: str, group_ids: list[str]
     ) -> list[ScheduledJob]:
-        """根据插件和群组ID列表获取任务"""
+        """[DEPRECATED] 根据插件和群组ID列表获取任务"""
         return await ScheduledJob.filter(
-            plugin_name=plugin_name, group_id__in=group_ids
+            plugin_name=plugin_name, target_descriptor__in=group_ids
         ).all()
 
     @staticmethod
@@ -77,20 +77,30 @@ class ScheduleRepository:
         return await ScheduledJob.update_or_create(defaults=defaults, **kwargs)
 
     @staticmethod
-    async def query_schedules(**filters: Any) -> list[ScheduledJob]:
+    async def query_schedules(
+        page: int | None = None, page_size: int | None = None, **filters: Any
+    ) -> tuple[list[ScheduledJob], int]:
         """
         根据任意条件查询任务列表
 
         参数:
+            page: 页码（从1开始）
+            page_size: 每页数量
             **filters: 过滤条件，如 group_id="123", plugin_name="abc"
 
         返回:
-            list[ScheduledJob]: 任务列表
+            tuple[list[ScheduledJob], int]: (任务列表, 总数)
         """
         cleaned_filters = {k: v for k, v in filters.items() if v is not None}
-        if not cleaned_filters:
-            return await ScheduledJob.all()
-        return await ScheduledJob.filter(**cleaned_filters).all()
+        query = ScheduledJob.filter(**cleaned_filters)
+
+        total_count = await query.count()
+
+        if page is not None and page_size is not None:
+            offset = (page - 1) * page_size
+            query = query.offset(offset).limit(page_size)
+
+        return await query.all(), total_count
 
     @staticmethod
     def filter(**kwargs: Any) -> QuerySet[ScheduledJob]:

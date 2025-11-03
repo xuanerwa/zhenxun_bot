@@ -6,6 +6,7 @@ from nonebot.adapters import Bot
 from nonebot_plugin_uninfo import Member, SceneType, get_interface
 
 from zhenxun.configs.config import Config
+from zhenxun.models.group_console import GroupConsole
 from zhenxun.models.group_member_info import GroupInfoUser
 from zhenxun.models.level_user import LevelUser
 from zhenxun.services.log import logger
@@ -94,6 +95,25 @@ class MemberUpdateManage:
                 )
                 return "更新群组失败，群组不存在..."
             members = await interface.get_members(SceneType.GROUP, group_list[0].id)
+
+            try:
+                group_console, _ = await GroupConsole.get_or_create(
+                    group_id=group_id, defaults={"platform": platform}
+                )
+                group_console.member_count = len(members)
+                group_console.group_name = group_list[0].name or ""
+                await group_console.save(update_fields=["member_count", "group_name"])
+                logger.debug(
+                    f"已更新群组 {group_id} 的成员总数为 {len(members)}",
+                    "更新群组成员信息",
+                )
+            except Exception as e:
+                logger.error(
+                    f"更新群组 {group_id} 的 GroupConsole 信息失败",
+                    "更新群组成员信息",
+                    e=e,
+                )
+
             db_user = await GroupInfoUser.filter(group_id=group_id).all()
             db_user_uid = [u.user_id for u in db_user]
             data_list = ([], [], [])

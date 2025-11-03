@@ -1,14 +1,46 @@
 """
-目标选择器 (Targeter)
+目标解析与选择器 (Targeting)
 
-提供链式API，用于构建和执行对多个定时任务的批量操作。
+提供用于解析任务目标和批量操作目标的 ScheduleTargeter 类。
 """
 
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from .adapter import APSchedulerAdapter
-from .repository import ScheduleRepository
+from nonebot.adapters import Bot
+
+from zhenxun.services.tags import tag_manager
+
+__all__ = [
+    "ScheduleTargeter",
+    "_resolve_all_groups",
+    "_resolve_global_or_user",
+    "_resolve_group",
+    "_resolve_tag",
+    "_resolve_user",
+]
+
+
+async def _resolve_group(target_identifier: str, bot: Bot) -> list[str | None]:
+    return [target_identifier]
+
+
+async def _resolve_tag(target_identifier: str, bot: Bot) -> list[str | None]:
+    result = await tag_manager.resolve_tag_to_group_ids(target_identifier)
+    return result  # type: ignore
+
+
+async def _resolve_user(target_identifier: str, bot: Bot) -> list[str | None]:
+    return [target_identifier]
+
+
+async def _resolve_all_groups(target_identifier: str, bot: Bot) -> list[str | None]:
+    result = await tag_manager.resolve_tag_to_group_ids("@all", bot=bot)
+    return result
+
+
+async def _resolve_global_or_user(target_identifier: str, bot: Bot) -> list[str | None]:
+    return [None]
 
 
 class ScheduleTargeter:
@@ -34,6 +66,8 @@ class ScheduleTargeter:
         返回:
             list[ScheduledJob]: 符合过滤条件的任务列表。
         """
+        from .repository import ScheduleRepository
+
         query = ScheduleRepository.filter(**self._filters)
         return await query.all()
 
@@ -48,12 +82,14 @@ class ScheduleTargeter:
             return f"任务 ID {self._filters['id']} 的"
 
         parts = []
-        if "group_id" in self._filters:
-            group_id = self._filters["group_id"]
-            if group_id == self._manager.ALL_GROUPS:
+        if "target_descriptor" in self._filters:
+            descriptor = self._filters["target_descriptor"]
+            if descriptor == self._manager.ALL_GROUPS:
                 parts.append("所有群组中")
+            elif descriptor.startswith("tag:"):
+                parts.append(f"标签 '{descriptor[4:]}' 的")
             else:
-                parts.append(f"群 {group_id} 中")
+                parts.append(f"群 {descriptor} 中")
 
         if "plugin_name" in self._filters:
             parts.append(f"插件 '{self._filters['plugin_name']}' 的")
@@ -111,6 +147,9 @@ class ScheduleTargeter:
         返回:
             tuple[int, str]: (成功移除的任务数量, 操作结果消息)。
         """
+        from .engine import APSchedulerAdapter
+        from .repository import ScheduleRepository
+
         schedules = await self._get_schedules()
         if not schedules:
             target_desc = self._generate_target_description()
