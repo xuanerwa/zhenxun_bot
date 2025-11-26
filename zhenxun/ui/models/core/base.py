@@ -64,13 +64,13 @@ class RenderableComponent(BaseModel, Renderable):
 
     @compat_computed_field
     def inline_style_str(self) -> str:
-        """[新增] 一个辅助属性，将内联样式字典转换为CSS字符串"""
+        """一个辅助属性，将内联样式字典转换为CSS字符串"""
         if not self.inline_style:
             return ""
         return "; ".join(f"{k}: {v}" for k, v in self.inline_style.items())
 
     def get_extra_css(self, context: Any) -> str | Awaitable[str]:
-        return ""
+        return self.component_css or ""
 
 
 class ContainerComponent(RenderableComponent, ABC):
@@ -86,7 +86,7 @@ class ContainerComponent(RenderableComponent, ABC):
         raise NotImplementedError
 
     def get_required_scripts(self) -> list[str]:
-        """[新增] 聚合所有子组件的脚本依赖。"""
+        """聚合所有子组件的脚本依赖。"""
         scripts = set(super().get_required_scripts())
         for child in self.get_children():
             if child:
@@ -94,7 +94,7 @@ class ContainerComponent(RenderableComponent, ABC):
         return list(scripts)
 
     def get_required_styles(self) -> list[str]:
-        """[新增] 聚合所有子组件的样式依赖。"""
+        """聚合所有子组件的样式依赖。"""
         styles = set(super().get_required_styles())
         for child in self.get_children():
             if child:

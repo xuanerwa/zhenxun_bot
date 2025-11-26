@@ -5,11 +5,12 @@ from typing import ClassVar
 
 from nonebot.adapters import Bot
 from nonebot.adapters.onebot.v11 import Bot as V11Bot
-from nonebot.exception import ActionFailed
+from nonebot.exception import ActionFailed, AdapterException
 from nonebot_plugin_alconna import UniMessage
 from nonebot_plugin_alconna.uniseg import Receipt, Reference
 from nonebot_plugin_session import EventSession
 
+from zhenxun.configs.config import Config
 from zhenxun.models.group_console import GroupConsole
 from zhenxun.services.log import logger
 from zhenxun.utils.common_utils import CommonUtils
@@ -17,6 +18,8 @@ from zhenxun.utils.platform import PlatformUtils
 
 from .models import BroadcastDetailResult, BroadcastResult
 from .utils import custom_nodes_to_v11_nodes, uni_message_to_v11_list_of_dicts
+
+BROADCAST_SEND_DELAY_RANGE = (1, 3)
 
 
 class BroadcastManager:
@@ -92,8 +95,16 @@ class BroadcastManager:
         logger.debug("清空上一次的广播消息ID记录", "广播", session=session)
         cls.clear_last_broadcast_msg_ids()
 
+        concurrency_limit = Config.get_config(
+            "_task",
+            "BROADCAST_CONCURRENCY_LIMIT",
+            10,
+        )
+
         all_groups, _ = await cls.get_all_groups(bot)
-        return await cls.send_to_specific_groups(bot, message, all_groups, session)
+        return await cls.send_to_specific_groups(
+            bot, message, all_groups, session, concurrency_limit=concurrency_limit
+        )
 
     @classmethod
     async def send_to_specific_groups(
@@ -102,14 +113,17 @@ class BroadcastManager:
         message: UniMessage,
         target_groups: list[GroupConsole],
         session_info: EventSession | str | None = None,
+        force_send: bool = False,
+        concurrency_limit: int = 10,
     ) -> BroadcastResult:
         """发送广播到指定群组"""
         log_session = session_info or bot.self_id
-        logger.debug(
-            f"开始广播，目标 {len(target_groups)} 个群组，Bot ID: {bot.self_id}",
-            "广播",
-            session=log_session,
+        target_count = len(target_groups)
+        log_message = (
+            f"开始广播，目标 {target_count} 个群组 (并发数: {concurrency_limit})，"
+            f"Bot ID: {bot.self_id}, ForceSend: {force_send}"
         )
+        logger.info(log_message, "广播", session=log_session)
 
         if not target_groups:
             logger.debug("目标群组列表为空，广播结束", "广播", session=log_session)
@@ -165,7 +179,12 @@ class BroadcastManager:
                 )
                 return 0, len(target_groups)
             success_count, error_count, skip_count = await cls._broadcast_forward(
-                bot, log_session, target_groups, v11_nodes
+                bot,
+                log_session,
+                target_groups,
+                v11_nodes,
+                force_send,
+                concurrency_limit,
             )
         else:
             if is_forward_broadcast:
@@ -175,7 +194,12 @@ class BroadcastManager:
                     session=log_session,
                 )
             success_count, error_count, skip_count = await cls._broadcast_normal(
-                bot, log_session, target_groups, message
+                bot,
+                log_session,
+                target_groups,
+                message,
+                force_send,
+                concurrency_limit,
             )
 
         total = len(target_groups)
@@ -287,10 +311,15 @@ class BroadcastManager:
             )
 
     @classmethod
-    async def _check_group_availability(cls, bot: Bot, group: GroupConsole) -> bool:
+    async def _check_group_availability(
+        cls, bot: Bot, group: GroupConsole, force_send: bool = False
+    ) -> bool:
         """检查群组是否可用"""
         if not group.group_id:
             return False
+
+        if force_send:
+            return True
 
         if await CommonUtils.task_is_block(bot, "broadcast", group.group_id):
             return False
@@ -304,54 +333,69 @@ class BroadcastManager:
         session_info: EventSession | str,
         group_list: list[GroupConsole],
         v11_nodes: list[dict],
+        force_send: bool = False,
+        concurrency_limit: int = 10,
     ) -> BroadcastDetailResult:
         """发送合并转发"""
-        success_count = 0
-        error_count = 0
-        skip_count = 0
+        semaphore = asyncio.Semaphore(concurrency_limit)
+        msg_id_lock = asyncio.Lock()
 
-        for _, group in enumerate(group_list):
+        async def send_to_group(group: GroupConsole) -> GroupConsole:
             group_key = group.group_id or group.channel_id
+            async with semaphore:
+                try:
+                    result = await bot.send_group_forward_msg(
+                        group_id=int(group.group_id), messages=v11_nodes
+                    )
+                    async with msg_id_lock:
+                        await cls._extract_message_id_from_result(
+                            result, group_key, session_info, "合并转发"
+                        )
+                    await asyncio.sleep(random.uniform(*BROADCAST_SEND_DELAY_RANGE))
+                    return group
+                except (ActionFailed, AdapterException) as ae:
+                    logger.error(
+                        f"发送失败(合并转发) to {group_key}: {ae}",
+                        "广播",
+                        session=session_info,
+                        e=ae,
+                    )
+                    raise
+                except Exception as e:
+                    logger.error(
+                        f"发送失败(合并转发) to {group_key}: {e}",
+                        "广播",
+                        session=session_info,
+                        e=e,
+                    )
+                    raise
 
-            if not await cls._check_group_availability(bot, group):
-                skip_count += 1
-                continue
+        tasks: list[asyncio.Task] = []
+        skipped_groups: list[GroupConsole] = []
+        for group in group_list:
+            if await cls._check_group_availability(bot, group, force_send):
+                tasks.append(asyncio.create_task(send_to_group(group)))
+            else:
+                skipped_groups.append(group)
 
-            try:
-                result = await bot.send_group_forward_msg(
-                    group_id=int(group.group_id), messages=v11_nodes
-                )
+        if skipped_groups:
+            logger.info(
+                f"跳过 {len(skipped_groups)} 个不符合条件的群组",
+                "广播",
+                session=session_info,
+            )
 
-                logger.debug(
-                    f"合并转发消息发送结果: {result}, 类型: {type(result)}",
-                    "广播",
-                    session=session_info,
-                )
+        if not tasks:
+            return 0, 0, len(skipped_groups)
 
-                await cls._extract_message_id_from_result(
-                    result, group_key, session_info, "合并转发"
-                )
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                success_count += 1
-                await asyncio.sleep(random.randint(1, 3))
-            except ActionFailed as af_e:
-                error_count += 1
-                logger.error(
-                    f"发送失败(合并转发) to {group_key}: {af_e}",
-                    "广播",
-                    session=session_info,
-                    e=af_e,
-                )
-            except Exception as e:
-                error_count += 1
-                logger.error(
-                    f"发送失败(合并转发) to {group_key}: {e}",
-                    "广播",
-                    session=session_info,
-                    e=e,
-                )
+        success_count = sum(
+            1 for result in results if not isinstance(result, Exception)
+        )
+        error_count = len(results) - success_count
 
-        return success_count, error_count, skip_count
+        return success_count, error_count, len(skipped_groups)
 
     @classmethod
     async def _broadcast_normal(
@@ -360,58 +404,83 @@ class BroadcastManager:
         session_info: EventSession | str,
         group_list: list[GroupConsole],
         message: UniMessage,
+        force_send: bool = False,
+        concurrency_limit: int = 10,
     ) -> BroadcastDetailResult:
         """发送普通消息"""
-        success_count = 0
-        error_count = 0
-        skip_count = 0
+        semaphore = asyncio.Semaphore(concurrency_limit)
+        msg_id_lock = asyncio.Lock()
 
-        for _, group in enumerate(group_list):
+        async def send_to_group(group: GroupConsole) -> GroupConsole:
             group_key = (
                 f"{group.group_id}:{group.channel_id}"
                 if group.channel_id
                 else str(group.group_id)
             )
-
-            if not await cls._check_group_availability(bot, group):
-                skip_count += 1
-                continue
-
-            try:
-                target = PlatformUtils.get_target(
-                    group_id=group.group_id, channel_id=group.channel_id
-                )
-
-                if target:
-                    receipt: Receipt = await message.send(target, bot=bot)
-
-                    logger.debug(
-                        f"广播消息发送结果: {receipt}, 类型: {type(receipt)}",
-                        "广播",
-                        session=session_info,
-                    )
-
-                    await cls._extract_message_id_from_result(
-                        receipt, group_key, session_info
-                    )
-
-                    success_count += 1
-                    await asyncio.sleep(random.randint(1, 3))
-                else:
-                    logger.warning(
-                        "target为空", "广播", session=session_info, target=group_key
-                    )
-                    skip_count += 1
-            except Exception as e:
-                error_count += 1
-                logger.error(
-                    f"发送失败(普通) to {group_key}: {e}",
+            target = PlatformUtils.get_target(
+                group_id=group.group_id, channel_id=group.channel_id
+            )
+            if not target:
+                logger.warning(
+                    "target为空",
                     "广播",
                     session=session_info,
-                    e=e,
+                    target=group_key,
                 )
+                raise ValueError(f"无法为群组 {group_key} 创建发送目标")
 
-        return success_count, error_count, skip_count
+            async with semaphore:
+                try:
+                    receipt: Receipt = await message.send(target, bot=bot)
+                    async with msg_id_lock:
+                        await cls._extract_message_id_from_result(
+                            receipt, group_key, session_info
+                        )
+                    await asyncio.sleep(random.uniform(*BROADCAST_SEND_DELAY_RANGE))
+                    return group
+                except (ActionFailed, AdapterException) as ae:
+                    logger.error(
+                        f"发送失败(普通) to {group_key}: {ae}",
+                        "广播",
+                        session=session_info,
+                        e=ae,
+                    )
+                    raise
+                except Exception as e:
+                    logger.error(
+                        f"发送失败(普通) to {group_key}: {e}",
+                        "广播",
+                        session=session_info,
+                        e=e,
+                    )
+                    raise
+
+        tasks: list[asyncio.Task] = []
+        skipped_groups: list[GroupConsole] = []
+        for group in group_list:
+            if await cls._check_group_availability(bot, group, force_send):
+                tasks.append(asyncio.create_task(send_to_group(group)))
+            else:
+                skipped_groups.append(group)
+
+        if skipped_groups:
+            logger.info(
+                f"跳过 {len(skipped_groups)} 个不符合条件的群组",
+                "广播",
+                session=session_info,
+            )
+
+        if not tasks:
+            return 0, 0, len(skipped_groups)
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        success_count = sum(
+            1 for result in results if not isinstance(result, Exception)
+        )
+        error_count = len(results) - success_count
+
+        return success_count, error_count, len(skipped_groups)
 
     @classmethod
     async def recall_last_broadcast(

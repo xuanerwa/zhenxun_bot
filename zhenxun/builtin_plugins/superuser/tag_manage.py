@@ -176,10 +176,28 @@ tag_cmd = on_alconna(
             help_text="删除标签",
         ),
         Subcommand("clear", help_text="清空所有标签"),
+        Subcommand("prune", alias=["check", "清理"], help_text="清理无效的群组关联"),
+        Subcommand(
+            "clone",
+            Args["source_name", str]["new_name", str],
+            Option("--add", Args["add_groups", MultiVar(str)]),
+            Option("--remove", Args["remove_groups", MultiVar(str)]),
+            Option("--as-dynamic", action=store_true),
+            Option("--desc", Args["description", str]),
+            Option("--mode", Args["mode", ["black", "white"]]),
+            help_text="克隆标签",
+        ),
     ),
     permission=SUPERUSER,
     priority=5,
     block=True,
+)
+
+tag_cmd.shortcut(
+    "清理标签",
+    command="tag",
+    arguments=["prune"],
+    prefix=True,
 )
 
 
@@ -269,17 +287,24 @@ async def handle_create(
         ).finish()
 
     try:
+        gids_to_create = None
+        unique_gids_count = 0
+        if group_ids.available:
+            unique_gids = list(dict.fromkeys(group_ids.result))
+            gids_to_create = unique_gids
+            unique_gids_count = len(unique_gids)
+
         tag = await tag_manager.create_tag(
             name=name.result,
             is_blacklist=blacklist.result,
             description=description.result if description.available else None,
-            group_ids=group_ids.result if group_ids.available else None,
+            group_ids=gids_to_create,
             tag_type=ttype,
             dynamic_rule=rule.result if rule.available else None,
         )
         msg = f"标签 '{tag.name}' 创建成功！"
         if group_ids.available:
-            msg += f"\n已同时关联 {len(group_ids.result)} 个群组。"
+            msg += f"\n已同时关联 {unique_gids_count} 个群组。"
         await MessageUtils.build_message(msg).finish()
     except IntegrityError:
         await MessageUtils.build_message(
@@ -411,3 +436,48 @@ async def handle_clear():
         await MessageUtils.build_message(f"操作完成，已清空 {count} 个标签。").finish()
     else:
         await MessageUtils.build_message("操作已取消。").finish()
+
+
+@tag_cmd.assign("clone")
+async def handle_clone(
+    bot: Bot,
+    source_name: Match[str],
+    new_name: Match[str],
+    add_groups: Query[list[str] | None] = AlconnaQuery("clone.add.add_groups", None),
+    remove_groups: Query[list[str] | None] = AlconnaQuery(
+        "clone.remove.remove_groups", None
+    ),
+    as_dynamic: Query[bool] = AlconnaQuery("clone.as-dynamic.value", False),
+    description: Query[str | None] = AlconnaQuery("clone.desc.description", None),
+    mode: Query[str | None] = AlconnaQuery("clone.mode.mode", None),
+):
+    try:
+        new_tag = await tag_manager.clone_tag(
+            source_name=source_name.result,
+            new_name=new_name.result,
+            bot=bot,
+            add_groups=add_groups.result,
+            remove_groups=remove_groups.result,
+            as_dynamic=as_dynamic.result,
+            description=description.result,
+            mode=mode.result,
+        )
+
+        tag_type_str = "动态" if new_tag.tag_type == "DYNAMIC" else "静态"
+        group_count = 0
+        if new_tag.tag_type == "STATIC":
+            group_count = await new_tag.groups.all().count()
+
+        msg = f"✅ 成功克隆标签!\n- 新标签: {new_tag.name}\n- 类型: {tag_type_str}"
+        if new_tag.tag_type == "STATIC":
+            msg += f" (含 {group_count} 个群组)"
+        await MessageUtils.build_message(msg).finish()
+    except (ValueError, IntegrityError) as e:
+        await MessageUtils.build_message(f"克隆失败: {e}").finish()
+
+
+@tag_cmd.assign("prune")
+async def handle_prune():
+    deleted_count = await tag_manager.prune_stale_group_links()
+    msg = f"清理完成！共移除了 {deleted_count} 个无效的群组关联。"
+    await MessageUtils.build_message(msg).finish()

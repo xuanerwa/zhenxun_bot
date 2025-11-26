@@ -17,6 +17,8 @@ from zhenxun.configs.utils import PluginExtraData, RegisterConfig, Task
 from zhenxun.models.event_log import EventLog
 from zhenxun.models.group_console import GroupConsole
 from zhenxun.services.cache import CacheRoot
+from zhenxun.services.log import logger
+from zhenxun.services.tags import tag_manager
 from zhenxun.utils.common_utils import CommonUtils
 from zhenxun.utils.enum import EventLogType, PluginType
 from zhenxun.utils.platform import PlatformUtils
@@ -134,6 +136,11 @@ async def _(
         await GroupManager.kick_bot(bot, group_id, str(event.operator_id))
         await EventLog.create(
             user_id=user_id, group_id=group_id, event_type=EventLogType.KICK_BOT
+        )
+        await tag_manager.remove_group_from_all_tags(group_id)
+        logger.info(
+            f"机器人被移出群聊，已自动从所有静态标签中移除群组 {group_id}",
+            "群组标签管理",
         )
     elif event.sub_type in ["leave", "kick"]:
         if event.sub_type == "leave":

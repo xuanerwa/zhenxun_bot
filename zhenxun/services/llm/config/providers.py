@@ -192,10 +192,20 @@ def get_default_providers() -> list[dict[str, Any]]:
             "api_base": "https://generativelanguage.googleapis.com",
             "api_type": "gemini",
             "models": [
-                {"model_name": "gemini-2.0-flash"},
                 {"model_name": "gemini-2.5-flash"},
                 {"model_name": "gemini-2.5-pro"},
-                {"model_name": "gemini-2.5-flash-lite-preview-06-17"},
+                {"model_name": "gemini-2.5-flash-lite"},
+            ],
+        },
+        {
+            "name": "OpenRouter",
+            "api_key": "YOUR_OPENROUTER_API_KEY",
+            "api_base": "https://openrouter.ai/api",
+            "api_type": "openrouter",
+            "models": [
+                {"model_name": "google/gemini-2.5-pro"},
+                {"model_name": "google/gemini-2.5-flash"},
+                {"model_name": "x-ai/grok-4"},
             ],
         },
     ]

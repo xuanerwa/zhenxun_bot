@@ -59,7 +59,7 @@ def uni_segment_to_v11_segment_dict(
                 logger.warning(f"无法处理 Video.raw 的类型: {type(raw_data)}", "广播")
         elif getattr(seg, "path", None):
             logger.warning(
-                f"在合并转发中使用了本地视频路径，可能无法显示: {seg.path}", "广播"
+                f"在合并转发中使用了本地视频路径，可能无法发送: {seg.path}", "广播"
             )
             return {"type": "video", "data": {"file": f"file:///{seg.path}"}}
         else:

@@ -75,6 +75,7 @@ class RendererService:
         self._custom_globals: dict[str, Callable] = {}
 
         self.filter("dump_json")(self._pydantic_tojson_filter)
+        self.global_function("inline_asset")(self._inline_asset_global)
 
     def _create_jinja_env(self) -> Environment:
         """
@@ -176,9 +177,24 @@ class RendererService:
 
         return decorator
 
+    async def _inline_asset_global(self, namespaced_path: str) -> str:
+        """
+        一个Jinja2全局函数，用于读取并内联一个已注册命名空间下的资源文件内容。
+        主要用于内联SVG，以解决浏览器的跨域安全问题。
+        """
+        if not self._jinja_env or not self._jinja_env.loader:
+            return f"<!-- Error: Jinja env not ready for {namespaced_path} -->"
+        try:
+            source, _, _ = self._jinja_env.loader.get_source(
+                self._jinja_env, namespaced_path
+            )
+            return source
+        except TemplateNotFound:
+            return f"<!-- Asset not found: {namespaced_path} -->"
+
     async def initialize(self):
         """
-        [新增] 延迟初始化方法，在 on_startup 钩子中调用。
+        延迟初始化方法，在 on_startup 钩子中调用。
 
         负责初始化截图引擎和主题管理器，确保在首次渲染前所有依赖都已准备就绪。
         使用锁来防止并发初始化。
@@ -223,27 +239,36 @@ class RendererService:
         )
 
         style_paths_to_load = []
-        if manifest and "styles" in manifest:
-            styles = (
-                [manifest["styles"]]
-                if isinstance(manifest["styles"], str)
-                else manifest["styles"]
-            )
-            for style_path in styles:
-                full_style_path = str(Path(component_path_base) / style_path).replace(
-                    "\\", "/"
+        if manifest and manifest.get("styles"):
+            styles = manifest["styles"]
+            styles = [styles] if isinstance(styles, str) else styles
+
+            resolution_base_path = Path(component_path_base)
+            if variant:
+                skin_manifest_path = str(Path(component_path_base) / "skins" / variant)
+                skin_manifest = await context.theme_manager._load_single_manifest(
+                    skin_manifest_path
                 )
-                style_paths_to_load.append(full_style_path)
+                if skin_manifest and "styles" in skin_manifest:
+                    resolution_base_path = Path(skin_manifest_path)
+
+            style_paths_to_load.extend(
+                str(resolution_base_path / style).replace("\\", "/") for style in styles
+            )
         else:
-            resolved_template_name = (
+            base_template_path = (
                 await context.theme_manager._resolve_component_template(
                     component, context
                 )
             )
-            conventional_style_path = str(
-                Path(resolved_template_name).with_name("style.css")
+            base_style_path = str(
+                Path(base_template_path).with_name("style.css")
             ).replace("\\", "/")
-            style_paths_to_load.append(conventional_style_path)
+            style_paths_to_load.append(base_style_path)
+
+            if variant:
+                skin_style_path = f"{component_path_base}/skins/{variant}/style.css"
+                style_paths_to_load.append(skin_style_path)
 
         for css_template_path in style_paths_to_load:
             try:

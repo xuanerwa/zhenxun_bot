@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 from nonebot_plugin_alconna import (
@@ -58,7 +60,12 @@ __plugin_meta__ = PluginMetadata(
 llm_cmd = on_alconna(
     Alconna(
         "llm",
-        Subcommand("list", alias=["ls"], help_text="查看模型列表"),
+        Subcommand(
+            "list",
+            Option("--text", action=store_true, help_text="以纯文本格式输出模型列表"),
+            alias=["ls"],
+            help_text="查看模型列表",
+        ),
         Subcommand("info", Args["model_name", str], help_text="查看模型详情"),
         Subcommand("default", Args["model_name?", str], help_text="查看或设置默认模型"),
         Subcommand(
@@ -80,13 +87,36 @@ llm_cmd = on_alconna(
 
 
 @llm_cmd.assign("list")
-async def handle_list(arp: Arparma, show_all: Query[bool] = Query("all")):
+async def handle_list(
+    arp: Arparma,
+    show_all: Query[bool] = Query("all"),
+    text_mode: Query[bool] = Query("list.text.value", False),
+):
     """处理 'llm list' 命令"""
     logger.info("获取LLM模型列表", command="LLM Manage", session=arp.header_result)
     models = await DataSource.get_model_list(show_all=show_all.result)
 
-    image = await Presenters.format_model_list_as_image(models, show_all.result)
-    await llm_cmd.finish(MessageUtils.build_message(image))
+    if text_mode.result:
+        if not models:
+            await llm_cmd.finish("当前没有配置任何LLM模型。")
+
+        grouped_models = defaultdict(list)
+        for model in models:
+            grouped_models[model["provider_name"]].append(model)
+
+        response_parts = ["可用的LLM模型列表:"]
+        for provider, model_list in grouped_models.items():
+            response_parts.append(f"\n{provider}:")
+            for model in model_list:
+                response_parts.append(
+                    f"  {model['provider_name']}/{model['model_name']}"
+                )
+
+        response_text = "\n".join(response_parts)
+        await llm_cmd.finish(response_text)
+    else:
+        image = await Presenters.format_model_list_as_image(models, show_all.result)
+        await llm_cmd.finish(MessageUtils.build_message(image))
 
 
 @llm_cmd.assign("info")
@@ -114,7 +144,7 @@ async def handle_default(arp: Arparma, model_name: Match[str]):
             command="LLM Manage",
             session=arp.header_result,
         )
-        success, message = await DataSource.set_default_model(model_name.result)
+        _success, message = await DataSource.set_default_model(model_name.result)
         await llm_cmd.finish(message)
     else:
         logger.info("查看默认模型", command="LLM Manage", session=arp.header_result)
@@ -132,7 +162,7 @@ async def handle_test(arp: Arparma, model_name: Match[str]):
     )
     await llm_cmd.send(f"正在测试模型 '{model_name.result}'，请稍候...")
 
-    success, message = await DataSource.test_model_connectivity(model_name.result)
+    _success, message = await DataSource.test_model_connectivity(model_name.result)
     await llm_cmd.finish(message)
 
 
@@ -167,5 +197,5 @@ async def handle_reset_key(
     )
     logger.info(log_msg, command="LLM Manage", session=arp.header_result)
 
-    success, message = await DataSource.reset_key(provider_name.result, key_to_reset)
+    _success, message = await DataSource.reset_key(provider_name.result, key_to_reset)
     await llm_cmd.finish(message)

@@ -354,6 +354,24 @@ class GeminiAdapter(BaseAdapter):
 
         return safety_settings if safety_settings else None
 
+    def validate_response(self, response_json: dict[str, Any]) -> None:
+        """验证 Gemini API 响应，增加对 promptFeedback 的检查"""
+        super().validate_response(response_json)
+
+        if prompt_feedback := response_json.get("promptFeedback"):
+            if block_reason := prompt_feedback.get("blockReason"):
+                logger.warning(
+                    f"Gemini 内容因 promptFeedback 被安全过滤: {block_reason}"
+                )
+                raise LLMException(
+                    f"内容被安全过滤: {block_reason}",
+                    code=LLMErrorCode.CONTENT_FILTERED,
+                    details={
+                        "block_reason": block_reason,
+                        "safety_ratings": prompt_feedback.get("safetyRatings"),
+                    },
+                )
+
     def parse_response(
         self,
         model: "LLMModel",

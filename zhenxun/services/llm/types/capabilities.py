@@ -9,6 +9,8 @@ import fnmatch
 
 from pydantic import BaseModel, Field
 
+from zhenxun.services.log import logger
+
 
 class ModelModality(str, Enum):
     TEXT = "text"
@@ -47,6 +49,46 @@ GEMINI_CAPABILITIES = ModelCapabilities(
 GEMINI_IMAGE_GEN_CAPABILITIES = ModelCapabilities(
     input_modalities={ModelModality.TEXT, ModelModality.IMAGE},
     output_modalities={ModelModality.TEXT, ModelModality.IMAGE},
+    supports_tool_calling=True,
+)
+
+GPT_ADVANCED_TEXT_IMAGE_CAPABILITIES = ModelCapabilities(
+    input_modalities={ModelModality.TEXT, ModelModality.IMAGE},
+    output_modalities={ModelModality.TEXT},
+    supports_tool_calling=True,
+)
+
+GPT_MULTIMODAL_IO_CAPABILITIES = ModelCapabilities(
+    input_modalities={ModelModality.TEXT, ModelModality.AUDIO, ModelModality.IMAGE},
+    output_modalities={ModelModality.TEXT, ModelModality.AUDIO},
+    supports_tool_calling=True,
+)
+
+GPT_IMAGE_GENERATION_CAPABILITIES = ModelCapabilities(
+    input_modalities={ModelModality.TEXT, ModelModality.IMAGE},
+    output_modalities={ModelModality.IMAGE},
+    supports_tool_calling=True,
+)
+
+GPT_VIDEO_GENERATION_CAPABILITIES = ModelCapabilities(
+    input_modalities={ModelModality.TEXT, ModelModality.IMAGE, ModelModality.VIDEO},
+    output_modalities={ModelModality.VIDEO},
+    supports_tool_calling=True,
+)
+
+DEFAULT_PERMISSIVE_CAPABILITIES = ModelCapabilities(
+    input_modalities={
+        ModelModality.TEXT,
+        ModelModality.IMAGE,
+        ModelModality.AUDIO,
+        ModelModality.VIDEO,
+    },
+    output_modalities={
+        ModelModality.TEXT,
+        ModelModality.IMAGE,
+        ModelModality.AUDIO,
+        ModelModality.VIDEO,
+    },
     supports_tool_calling=True,
 )
 
@@ -91,11 +133,8 @@ MODEL_CAPABILITIES_REGISTRY: dict[str, ModelCapabilities] = {
         is_embedding_model=True,
     ),
     "*gemini-*-image-preview*": GEMINI_IMAGE_GEN_CAPABILITIES,
-    "gemini-2.5-pro*": GEMINI_CAPABILITIES,
-    "gemini-1.5-pro*": GEMINI_CAPABILITIES,
-    "gemini-2.5-flash*": GEMINI_CAPABILITIES,
-    "gemini-2.0-flash*": GEMINI_CAPABILITIES,
-    "gemini-1.5-flash*": GEMINI_CAPABILITIES,
+    "gemini-*-pro*": GEMINI_CAPABILITIES,
+    "gemini-*-flash*": GEMINI_CAPABILITIES,
     "GLM-4V-Flash": ModelCapabilities(
         input_modalities={ModelModality.TEXT, ModelModality.IMAGE},
         output_modalities={ModelModality.TEXT},
@@ -112,6 +151,13 @@ MODEL_CAPABILITIES_REGISTRY: dict[str, ModelCapabilities] = {
     "doubao-1-5-thinking-vision-pro": DOUBAO_ADVANCED_MULTIMODAL_CAPABILITIES,
     "deepseek-chat": STANDARD_TEXT_TOOL_CAPABILITIES,
     "deepseek-reasoner": STANDARD_TEXT_TOOL_CAPABILITIES,
+    "gpt-5*": GPT_ADVANCED_TEXT_IMAGE_CAPABILITIES,
+    "gpt-4.1*": GPT_ADVANCED_TEXT_IMAGE_CAPABILITIES,
+    "gpt-4o*": GPT_MULTIMODAL_IO_CAPABILITIES,
+    "o3*": GPT_ADVANCED_TEXT_IMAGE_CAPABILITIES,
+    "o4-mini*": GPT_ADVANCED_TEXT_IMAGE_CAPABILITIES,
+    "gpt image*": GPT_IMAGE_GENERATION_CAPABILITIES,
+    "sora*": GPT_VIDEO_GENERATION_CAPABILITIES,
 }
 
 
@@ -126,11 +172,25 @@ def get_model_capabilities(model_name: str) -> ModelCapabilities:
             canonical_name = c_name
             break
 
-    if canonical_name in MODEL_CAPABILITIES_REGISTRY:
-        return MODEL_CAPABILITIES_REGISTRY[canonical_name]
+    parts = canonical_name.split("/")
+    names_to_check = ["/".join(parts[i:]) for i in range(len(parts))]
 
-    for pattern, capabilities in MODEL_CAPABILITIES_REGISTRY.items():
-        if "*" in pattern and fnmatch.fnmatch(model_name, pattern):
-            return capabilities
+    logger.trace(f"为 '{model_name}' 生成的检查列表: {names_to_check}")
 
-    return ModelCapabilities()
+    for name in names_to_check:
+        if name in MODEL_CAPABILITIES_REGISTRY:
+            logger.debug(f"模型 '{model_name}' 通过精确匹配 '{name}' 找到能力定义。")
+            return MODEL_CAPABILITIES_REGISTRY[name]
+
+        for pattern, capabilities in MODEL_CAPABILITIES_REGISTRY.items():
+            if "*" in pattern and fnmatch.fnmatch(name, pattern):
+                logger.debug(
+                    f"模型 '{model_name}' 通过通配符匹配 '{name}'(pattern: '{pattern}')"
+                    f"找到能力定义。"
+                )
+                return capabilities
+
+    logger.warning(
+        f"模型 '{model_name}' 的能力定义未在注册表中找到，将使用默认的'全功能'回退配置"
+    )
+    return DEFAULT_PERMISSIVE_CAPABILITIES

@@ -40,7 +40,7 @@ class Renderable(ABC):
     @abstractmethod
     def get_children(self) -> Iterable["Renderable"]:
         """
-        [新增] 返回一个包含所有直接子组件的可迭代对象。
+        返回一个包含所有直接子组件的可迭代对象。
 
         这使得渲染服务能够递归地遍历整个组件树，以执行依赖收集（CSS、JS）等任务。
         非容器组件应返回一个空列表。

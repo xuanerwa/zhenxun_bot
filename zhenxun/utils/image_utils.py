@@ -6,7 +6,7 @@ import random
 import re
 
 import imagehash
-from nonebot.utils import is_coroutine_callable
+from nonebot.utils import is_coroutine_callable, run_sync
 from PIL import Image
 
 from zhenxun.configs.path_config import TEMP_PATH
@@ -378,7 +378,9 @@ async def get_download_image_hash(url: str, mark: str, use_proxy: bool = False) 
         if await AsyncHttpx.download_file(
             url, TEMP_PATH / f"compare_download_{mark}_img.jpg", use_proxy=use_proxy
         ):
-            img_hash = get_img_hash(TEMP_PATH / f"compare_download_{mark}_img.jpg")
+            img_hash = await run_sync(get_img_hash)(
+                TEMP_PATH / f"compare_download_{mark}_img.jpg"
+            )
             return str(img_hash)
     except Exception as e:
         logger.warning("下载读取图片Hash出错", e=e)

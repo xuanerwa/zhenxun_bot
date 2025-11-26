@@ -172,24 +172,45 @@ class ResourceResolver:
 
         if asset_path.startswith("@"):
             try:
-                full_asset_path = self.theme_manager.jinja_env.join_path(
-                    asset_path, current_template_name
-                )
-                _source, file_abs_path, _uptodate = (
-                    self.theme_manager.jinja_env.loader.get_source(
-                        self.theme_manager.jinja_env, full_asset_path
+                if "/" not in asset_path:
+                    raise TemplateNotFound(f"无效的命名空间路径: {asset_path}")
+
+                namespace, rel_path = asset_path.split("/", 1)
+
+                loader = self.theme_manager.jinja_env.loader
+                if (
+                    isinstance(loader, ChoiceLoader)
+                    and loader.loaders
+                    and isinstance(loader.loaders[0], PrefixLoader)
+                ):
+                    prefix_loader = loader.loaders[0]
+                    if namespace in prefix_loader.mapping:
+                        loader_for_namespace = prefix_loader.mapping[namespace]
+                        if isinstance(loader_for_namespace, FileSystemLoader):
+                            base_path = Path(loader_for_namespace.searchpath[0])
+                            file_abs_path = (base_path / rel_path).resolve()
+
+                            if file_abs_path.is_file():
+                                logger.debug(
+                                    f"Resolved namespaced asset"
+                                    f" '{asset_path}' -> '{file_abs_path}'"
+                                )
+                                return file_abs_path.as_uri()
+                            else:
+                                raise TemplateNotFound(asset_path)
+                        else:
+                            raise TemplateNotFound(
+                                f"Unsupported loader type for namespace '{namespace}'."
+                            )
+                    else:
+                        raise TemplateNotFound(f"Namespace '{namespace}' not found.")
+                else:
+                    raise TemplateNotFound(
+                        f"无法解析命名空间资源 '{asset_path}'，加载器结构不符合预期。"
                     )
-                )
-                if file_abs_path:
-                    logger.debug(
-                        f"Jinja Loader resolved asset '{asset_path}'->'{file_abs_path}'"
-                    )
-                    return Path(file_abs_path).absolute().as_uri()
+
             except TemplateNotFound:
-                logger.warning(
-                    f"资源文件在命名空间中未找到: '{asset_path}'"
-                    f"(在模板 '{current_template_name}' 中引用)"
-                )
+                logger.warning(f"资源文件在命名空间中未找到: '{asset_path}'")
                 return ""
 
         search_paths: list[tuple[str, Path]] = []
