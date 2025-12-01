@@ -20,6 +20,7 @@ require("nonebot_plugin_waiter")
 
 from .avatar_service import avatar_service
 from .db_context import Model, disconnect, with_db_timeout
+from .group_settings_service import group_settings_service
 from .llm import (
     AI,
     AIConfig,
@@ -77,6 +78,7 @@ __all__ = [
     "generate_structured",
     "get_cache_stats",
     "get_model_instance",
+    "group_settings_service",
     "list_available_models",
     "list_embedding_models",
     "logger",

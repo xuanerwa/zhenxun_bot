@@ -24,6 +24,7 @@ __all__ = [
     "_is_pydantic_type",
     "compat_computed_field",
     "dump_json_safely",
+    "model_construct",
     "model_copy",
     "model_dump",
     "model_json_schema",
@@ -43,6 +44,16 @@ def model_copy(
     else:
         update_dict = update or {}
         return model.copy(update=update_dict, deep=deep)
+
+
+def model_construct(model_class: type[T], **kwargs: Any) -> T:
+    """
+    Pydantic `model_construct` (v2) 与 `construct` (v1) 的兼容函数。
+    """
+    if PYDANTIC_V2:
+        return model_class.model_construct(**kwargs)
+    else:
+        return model_class.construct(**kwargs)
 
 
 def model_validate(model_class: type[T], obj: Any) -> T:

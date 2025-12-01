@@ -270,3 +270,9 @@ class PluginExtraData(BaseModel):
 
     def to_dict(self, **kwargs):
         return model_dump(self, **kwargs)
+
+    group_config_model: type[BaseModel] | None = None
+    """插件的分群配置模型"""
+
+    class Config:
+        arbitrary_types_allowed = True

@@ -7,6 +7,7 @@
 from zhenxun.models.ban_console import BanConsole
 from zhenxun.models.bot_console import BotConsole
 from zhenxun.models.group_console import GroupConsole
+from zhenxun.models.group_plugin_setting import GroupPluginSetting
 from zhenxun.models.level_user import LevelUser
 from zhenxun.models.plugin_info import PluginInfo
 from zhenxun.models.user_console import UserConsole
@@ -23,6 +24,11 @@ def register_cache_types():
     CacheRegistry.register(CacheType.GROUPS, GroupConsole)
     CacheRegistry.register(CacheType.BOT, BotConsole)
     CacheRegistry.register(CacheType.USERS, UserConsole)
+    CacheRegistry.register(
+        CacheType.GROUP_PLUGIN_SETTINGS,
+        GroupPluginSetting,
+        key_format="{group_id}_{plugin_name}_{key}",
+    )
     CacheRegistry.register(
         CacheType.LEVEL, LevelUser, key_format="{user_id}_{group_id}"
     )

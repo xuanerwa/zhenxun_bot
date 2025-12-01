@@ -53,6 +53,8 @@ class CacheType(StrEnum):
     """全局全部插件"""
     GROUPS = "GLOBAL_ALL_GROUPS"
     """全局全部群组"""
+    GROUP_PLUGIN_SETTINGS = "GROUP_PLUGIN_SETTINGS"
+    """插件分群配置"""
     USERS = "GLOBAL_ALL_USERS"
     """全部用户"""
     BAN = "GLOBAL_ALL_BAN"

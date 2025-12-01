@@ -1,6 +1,7 @@
 from typing import Any, Literal
 
 from nonebot.adapters import Bot, Event
+from nonebot.exception import SkippedException
 from nonebot.internal.params import Depends
 from nonebot.matcher import Matcher
 from nonebot.params import Command
@@ -9,6 +10,7 @@ from nonebot_plugin_session import EventSession
 from nonebot_plugin_uninfo import Uninfo
 
 from zhenxun.configs.config import Config
+from zhenxun.services import group_settings_service
 from zhenxun.utils.limiters import ConcurrencyLimiter, FreqLimiter, RateLimiter
 from zhenxun.utils.message import MessageUtils
 from zhenxun.utils.time_utils import TimeUtils
@@ -245,6 +247,34 @@ def GetConfig(
             if value is None and prompt:
                 await matcher.finish(prompt)
             return value
+
+    return Depends(dependency)
+
+
+def GetGroupConfig(model: type[Any]):
+    """
+    依赖注入函数，用于获取并解析插件的分群配置。
+    """
+
+    async def dependency(matcher: Matcher, session: EventSession):
+        """
+        实际的依赖注入逻辑。
+        """
+        plugin_name = matcher.plugin_name
+        group_id = session.id3 or session.id2
+
+        if not plugin_name:
+            raise SkippedException("无法确定插件名称以获取配置")
+
+        if not group_id:
+            try:
+                return model()
+            except Exception:
+                raise SkippedException("在私聊中无法获取分群配置")
+
+        return await group_settings_service.get_all_for_plugin(
+            group_id, plugin_name, parse_model=model
+        )
 
     return Depends(dependency)
 
