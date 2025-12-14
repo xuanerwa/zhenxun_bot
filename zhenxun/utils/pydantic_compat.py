@@ -10,8 +10,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, TypeVar, get_args, get_origin
 
-from nonebot.compat import PYDANTIC_V2, model_dump
-from pydantic import VERSION, BaseModel
+from nonebot.compat import (
+    PYDANTIC_V2,
+    model_dump,
+    model_fields,
+    type_validate_json,
+    type_validate_python,
+)
+from pydantic import BaseModel
 import ujson as json
 
 T = TypeVar("T", bound=BaseModel)
@@ -27,9 +33,13 @@ __all__ = [
     "model_construct",
     "model_copy",
     "model_dump",
+    "model_dump_json",
+    "model_fields",
     "model_json_schema",
     "model_validate",
     "parse_as",
+    "type_validate_json",
+    "type_validate_python",
 ]
 
 
@@ -58,12 +68,18 @@ def model_construct(model_class: type[T], **kwargs: Any) -> T:
 
 def model_validate(model_class: type[T], obj: Any) -> T:
     """
-    Pydantic `model_validate` (v2) 与 `parse_obj` (v1) 的兼容函数。
+    Pydantic 模型验证兼容函数。
+    """
+    return type_validate_python(model_class, obj)
+
+
+def model_dump_json(model: BaseModel, **kwargs: Any) -> str:
+    """
+    Pydantic `model.json()` (v1) 和 `model.model_dump_json()` (v2) 的兼容函数。
     """
     if PYDANTIC_V2:
-        return model_class.model_validate(obj)
-    else:
-        return model_class.parse_obj(obj)
+        return model.model_dump_json(**kwargs)
+    return model.json(**kwargs)
 
 
 if PYDANTIC_V2:
@@ -78,8 +94,7 @@ def model_json_schema(model_class: type[BaseModel], **kwargs: Any) -> dict[str, 
     """
     if PYDANTIC_V2:
         return model_class.model_json_schema(**kwargs)
-    else:
-        return model_class.schema(by_alias=kwargs.get("by_alias", True))
+    return model_class.schema(by_alias=kwargs.get("by_alias", True))
 
 
 def _is_pydantic_type(t: Any) -> bool:
@@ -108,18 +123,7 @@ def _dump_pydantic_obj(obj: Any) -> Any:
     return obj
 
 
-def parse_as(type_: type[V], obj: Any) -> V:
-    """
-    一个兼容 Pydantic V1 的 parse_obj_as 和V2的TypeAdapter.validate_python 的辅助函数。
-    """
-    if VERSION.startswith("1"):
-        from pydantic import parse_obj_as
-
-        return parse_obj_as(type_, obj)
-    else:
-        from pydantic import TypeAdapter  # type: ignore
-
-        return TypeAdapter(type_).validate_python(obj)
+parse_as = type_validate_python
 
 
 def dump_json_safely(obj: Any, **kwargs) -> str:

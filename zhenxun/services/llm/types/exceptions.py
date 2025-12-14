@@ -2,9 +2,31 @@
 LLM 异常类型定义
 """
 
+from enum import Enum
 from typing import Any
 
-from .enums import LLMErrorCode
+
+class LLMErrorCode(Enum):
+    """LLM 服务相关的错误代码枚举"""
+
+    MODEL_INIT_FAILED = 2000
+    MODEL_NOT_FOUND = 2001
+    API_REQUEST_FAILED = 2002
+    API_RESPONSE_INVALID = 2003
+    API_KEY_INVALID = 2004
+    API_QUOTA_EXCEEDED = 2005
+    API_TIMEOUT = 2006
+    API_RATE_LIMITED = 2007
+    NO_AVAILABLE_KEYS = 2008
+    UNKNOWN_API_TYPE = 2009
+    CONFIGURATION_ERROR = 2010
+    RESPONSE_PARSE_ERROR = 2011
+    CONTEXT_LENGTH_EXCEEDED = 2012
+    CONTENT_FILTERED = 2013
+    USER_LOCATION_NOT_SUPPORTED = 2014
+    INVALID_PARAMETER = 2017
+    GENERATION_FAILED = 2015
+    EMBEDDING_FAILED = 2016
 
 
 class LLMException(Exception):
@@ -27,7 +49,11 @@ class LLMException(Exception):
 
     def __str__(self) -> str:
         if self.details:
-            return f"{self.message} (错误码: {self.code.name}, 详情: {self.details})"
+            safe_details = {k: v for k, v in self.details.items() if k != "api_key"}
+            if safe_details:
+                return (
+                    f"{self.message} (错误码: {self.code.name}, 详情: {safe_details})"
+                )
         return f"{self.message} (错误码: {self.code.name})"
 
     @property
@@ -46,10 +72,13 @@ class LLMException(Exception):
                 "当前所有API密钥均不可用，请稍后再试或联系管理员。"
             ),
             LLMErrorCode.USER_LOCATION_NOT_SUPPORTED: (
-                "当前地区暂不支持此AI服务，请联系管理员或尝试其他模型。"
+                "当前网络环境不支持此 AI 模型 (如 Gemini/OpenAI)。\n"
+                "原因: 代理节点所在地区（如香港/国内/非支持区）被服务商屏蔽。\n"
+                "建议: 请尝试更换代理节点至支持的地区（如美国/日本/新加坡）。"
             ),
             LLMErrorCode.API_REQUEST_FAILED: "AI服务请求失败，请稍后再试。",
             LLMErrorCode.API_RESPONSE_INVALID: "AI服务响应异常，请稍后再试。",
+            LLMErrorCode.INVALID_PARAMETER: "请求参数错误，请检查输入内容。",
             LLMErrorCode.CONFIGURATION_ERROR: "AI服务配置错误，请联系管理员。",
             LLMErrorCode.CONTEXT_LENGTH_EXCEEDED: "输入内容过长，请缩短后重试。",
             LLMErrorCode.CONTENT_FILTERED: "内容被安全过滤，请修改后重试。",
@@ -66,15 +95,19 @@ def get_user_friendly_error_message(error: Exception) -> str:
 
     error_str = str(error).lower()
 
-    if "timeout" in error_str or "超时" in error_str:
-        return "请求超时，请稍后再试。"
-    elif "connection" in error_str or "连接" in error_str:
-        return "网络连接失败，请检查网络后重试。"
-    elif "permission" in error_str or "权限" in error_str:
-        return "权限不足，请联系管理员。"
-    elif "not found" in error_str or "未找到" in error_str:
-        return "请求的资源未找到，请检查配置。"
-    elif "invalid" in error_str or "无效" in error_str:
+    if "timeout" in error_str or "timed out" in error_str:
+        return "网络请求超时，请检查服务器网络或代理连接。"
+    if "connect" in error_str and ("refused" in error_str or "error" in error_str):
+        return "无法连接到 AI 服务商，请检查网络连接或代理设置。"
+    if "proxy" in error_str:
+        return "代理连接失败，请检查代理服务器是否正常运行。"
+    if "ssl" in error_str or "certificate" in error_str:
+        return "SSL 证书验证失败，请检查网络环境。"
+    if "permission" in error_str or "forbidden" in error_str:
+        return "权限不足，可能是 API Key 权限受限。"
+    if "not found" in error_str:
+        return "请求的资源未找到 (404)，请检查模型名称或端点配置。"
+    if "invalid" in error_str or "无效" in error_str:
         return "请求参数无效，请检查输入。"
-    else:
-        return "服务暂时不可用，请稍后再试。"
+
+    return f"服务暂时不可用 ({type(error).__name__})，请稍后再试。"

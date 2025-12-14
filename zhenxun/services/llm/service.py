@@ -5,39 +5,85 @@ LLM 模型实现类
 """
 
 from abc import ABC, abstractmethod
+import asyncio
 from collections.abc import Awaitable, Callable
 import json
-from typing import Any, TypeVar
+import re
+import time
+from typing import Any, Literal, TypeVar, cast
 
-from pydantic import BaseModel
+import httpx
+from pydantic import BaseModel, ConfigDict, Field
 
 from zhenxun.services.log import logger
+from zhenxun.utils.http_utils import AsyncHttpx
 from zhenxun.utils.log_sanitizer import sanitize_for_logging
 from zhenxun.utils.pydantic_compat import dump_json_safely
 
-from .adapters.base import RequestData
+from .adapters.base import BaseAdapter, RequestData, process_image_data
 from .config import LLMGenerationConfig
-from .config.providers import get_ai_config
+from .config.generation import LLMEmbeddingConfig
+from .config.providers import get_llm_config
 from .core import (
     KeyStatusStore,
     LLMHttpClient,
     RetryConfig,
+    _should_retry_llm_error,
     http_client_manager,
-    with_smart_retry,
 )
 from .types import (
-    EmbeddingTaskType,
     LLMErrorCode,
     LLMException,
     LLMMessage,
     LLMResponse,
+    LLMToolCall,
     ModelDetail,
     ProviderConfig,
-    ToolExecutable,
+    ToolChoice,
 )
 from .types.capabilities import ModelCapabilities, ModelModality
 
 T = TypeVar("T", bound=BaseModel)
+
+
+class LLMContext(BaseModel):
+    """LLM 执行上下文，用于在中间件管道中传递请求状态"""
+
+    messages: list[LLMMessage]
+    config: LLMGenerationConfig | LLMEmbeddingConfig
+    tools: list[Any] | None
+    tool_choice: str | dict[str, Any] | ToolChoice | None
+    timeout: float | None
+    extra: dict[str, Any] = Field(default_factory=dict)
+    request_type: Literal["generation", "embedding"] = "generation"
+    runtime_state: dict[str, Any] = Field(
+        default_factory=dict,
+        description="中间件运行时的临时状态存储(api_key, retry_count等)",
+    )
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+NextCall = Callable[[LLMContext], Awaitable[LLMResponse]]
+LLMMiddleware = Callable[[LLMContext, NextCall], Awaitable[LLMResponse]]
+
+
+class BaseLLMMiddleware(ABC):
+    """LLM 中间件抽象基类"""
+
+    @abstractmethod
+    async def __call__(self, context: LLMContext, next_call: NextCall) -> LLMResponse:
+        """
+        执行中间件逻辑
+
+        Args:
+            context: 请求上下文，包含配置和运行时状态
+            next_call: 调用链中的下一个处理函数
+
+        Returns:
+            LLMResponse: 模型响应结果
+        """
+        pass
 
 
 class LLMModelBase(ABC):
@@ -48,9 +94,9 @@ class LLMModelBase(ABC):
         self,
         messages: list[LLMMessage],
         config: LLMGenerationConfig | None = None,
-        tools: dict[str, ToolExecutable] | None = None,
-        tool_choice: str | dict[str, Any] | None = None,
-        **kwargs: Any,
+        tools: list[Any] | None = None,
+        tool_choice: str | dict[str, Any] | ToolChoice | None = None,
+        timeout: float | None = None,
     ) -> LLMResponse:
         """生成高级响应"""
         pass
@@ -59,8 +105,7 @@ class LLMModelBase(ABC):
     async def generate_embeddings(
         self,
         texts: list[str],
-        task_type: EmbeddingTaskType | str = EmbeddingTaskType.RETRIEVAL_DOCUMENT,
-        **kwargs: Any,
+        config: LLMEmbeddingConfig,
     ) -> list[list[float]]:
         """生成文本嵌入向量"""
         pass
@@ -98,34 +143,114 @@ class LLMModel(LLMModelBase):
         self.max_tokens = model_detail.max_tokens
 
         self._is_closed = False
+        self._ref_count = 0
+        self._middlewares: list[LLMMiddleware] = []
 
+    def _has_modality(self, modality: ModelModality, is_input: bool = True) -> bool:
+        target_set = (
+            self.capabilities.input_modalities
+            if is_input
+            else self.capabilities.output_modalities
+        )
+        return modality in target_set
+
+    @property
     def can_process_images(self) -> bool:
         """检查模型是否支持图片作为输入。"""
-        return ModelModality.IMAGE in self.capabilities.input_modalities
+        return self._has_modality(ModelModality.IMAGE)
 
+    @property
     def can_process_video(self) -> bool:
         """检查模型是否支持视频作为输入。"""
-        return ModelModality.VIDEO in self.capabilities.input_modalities
+        return self._has_modality(ModelModality.VIDEO)
 
+    @property
     def can_process_audio(self) -> bool:
         """检查模型是否支持音频作为输入。"""
-        return ModelModality.AUDIO in self.capabilities.input_modalities
+        return self._has_modality(ModelModality.AUDIO)
 
+    @property
     def can_generate_images(self) -> bool:
         """检查模型是否支持生成图片。"""
-        return ModelModality.IMAGE in self.capabilities.output_modalities
+        return self._has_modality(ModelModality.IMAGE, is_input=False)
 
+    @property
     def can_generate_audio(self) -> bool:
         """检查模型是否支持生成音频 (TTS)。"""
-        return ModelModality.AUDIO in self.capabilities.output_modalities
+        return self._has_modality(ModelModality.AUDIO, is_input=False)
 
-    def can_use_tools(self) -> bool:
-        """检查模型是否支持工具调用/函数调用。"""
-        return self.capabilities.supports_tool_calling
-
+    @property
     def is_embedding_model(self) -> bool:
         """检查这是否是一个嵌入模型。"""
         return self.capabilities.is_embedding_model
+
+    def add_middleware(self, middleware: LLMMiddleware) -> None:
+        """注册一个中间件到处理管道的最外层"""
+        self._middlewares.append(middleware)
+
+    def _build_pipeline(self) -> NextCall:
+        """
+        构建完整的中间件调用链。顺序为：
+        用户自定义中间件 -> Retry -> Logging -> KeySelection -> Network (终结者)
+        """
+        from .adapters import get_adapter_for_api_type
+
+        client_settings = get_llm_config().client_settings
+        retry_config = RetryConfig(
+            max_retries=client_settings.max_retries,
+            retry_delay=client_settings.retry_delay,
+        )
+        adapter = get_adapter_for_api_type(self.api_type)
+
+        network_middleware = NetworkRequestMiddleware(self, adapter)
+
+        async def terminal_handler(ctx: LLMContext) -> LLMResponse:
+            async def _noop(_: LLMContext) -> LLMResponse:
+                raise RuntimeError("NetworkRequestMiddleware 不应调用 next_call")
+
+            return await network_middleware(ctx, _noop)
+
+        def _wrap(middleware: LLMMiddleware, next_call: NextCall) -> NextCall:
+            async def _handler(inner_ctx: LLMContext) -> LLMResponse:
+                return await middleware(inner_ctx, next_call)
+
+            return _handler
+
+        handler: NextCall = terminal_handler
+        handler = _wrap(
+            KeySelectionMiddleware(self.key_store, self.provider_name, self.api_keys),
+            handler,
+        )
+        handler = _wrap(
+            LoggingMiddleware(self.provider_name, self.model_name),
+            handler,
+        )
+        handler = _wrap(
+            RetryMiddleware(retry_config, self.key_store),
+            handler,
+        )
+
+        for middleware in reversed(self._middlewares):
+            handler = _wrap(middleware, handler)
+
+        return handler
+
+    def _get_effective_api_type(self) -> str:
+        """
+        获取实际生效的 API 类型。
+        主要用于 Smart 模式下，判断日志净化应该使用哪种格式。
+        """
+        if self.api_type != "smart":
+            return self.api_type
+
+        if self.model_detail.api_type:
+            return self.model_detail.api_type
+        if (
+            "gemini" in self.model_name.lower()
+            and "openai" not in self.model_name.lower()
+        ):
+            return "gemini"
+        return "openai"
 
     async def _get_http_client(self) -> LLMHttpClient:
         """获取HTTP客户端"""
@@ -163,307 +288,6 @@ class LLMModel(LLMModelBase):
 
         return selected_key
 
-    async def _perform_api_call(
-        self,
-        prepare_request_func: Callable[[str], Awaitable["RequestData"]],
-        parse_response_func: Callable[[dict[str, Any]], Any],
-        http_client: "LLMHttpClient",
-        failed_keys: set[str] | None = None,
-        log_context: str = "API",
-    ) -> tuple[Any, str]:
-        """执行API调用的通用核心方法"""
-        api_key = await self._select_api_key(failed_keys)
-
-        try:
-            request_data = await prepare_request_func(api_key)
-
-            logger.info(
-                f"🌐 发起LLM请求 - 模型: {self.provider_name}/{self.model_name} "
-                f"[{log_context}]"
-            )
-            logger.debug(f"📡 请求URL: {request_data.url}")
-            masked_key = (
-                f"{api_key[:8]}...{api_key[-4:] if len(api_key) > 12 else '***'}"
-            )
-            logger.debug(f"🔑 API密钥: {masked_key}")
-            logger.debug(f"📋 请求头: {dict(request_data.headers)}")
-
-            sanitizer_req_context_map = {"gemini": "gemini_request"}
-            sanitizer_req_context = sanitizer_req_context_map.get(
-                self.api_type, "openai_request"
-            )
-            sanitized_body = sanitize_for_logging(
-                request_data.body, context=sanitizer_req_context
-            )
-            request_body_str = dump_json_safely(
-                sanitized_body, ensure_ascii=False, indent=2
-            )
-            logger.debug(f"📦 请求体: {request_body_str}")
-
-            http_response = await http_client.post(
-                request_data.url,
-                headers=request_data.headers,
-                content=dump_json_safely(request_data.body, ensure_ascii=False),
-            )
-
-            logger.debug(f"📥 响应状态码: {http_response.status_code}")
-            logger.debug(f"📄 响应头: {dict(http_response.headers)}")
-
-            response_bytes = await http_response.aread()
-            logger.debug(f"📦 响应体已完整读取 ({len(response_bytes)} bytes)")
-
-            if http_response.status_code != 200:
-                error_text = response_bytes.decode("utf-8", errors="ignore")
-                logger.error(
-                    f"❌ HTTP请求失败: {http_response.status_code} - {error_text} "
-                    f"[{log_context}]"
-                )
-                logger.debug(f"💥 完整错误响应: {error_text}")
-
-                await self.key_store.record_failure(
-                    api_key, http_response.status_code, error_text
-                )
-
-                if http_response.status_code in [401, 403]:
-                    error_code = LLMErrorCode.API_KEY_INVALID
-                elif http_response.status_code == 429:
-                    error_code = LLMErrorCode.API_RATE_LIMITED
-                elif http_response.status_code in [402, 413]:
-                    error_code = LLMErrorCode.API_QUOTA_EXCEEDED
-                else:
-                    error_code = LLMErrorCode.API_REQUEST_FAILED
-
-                raise LLMException(
-                    f"HTTP请求失败: {http_response.status_code}",
-                    code=error_code,
-                    details={
-                        "status_code": http_response.status_code,
-                        "response": error_text,
-                        "api_key": api_key,
-                    },
-                )
-
-            try:
-                response_json = json.loads(response_bytes)
-
-                sanitizer_context_map = {"gemini": "gemini_response"}
-                sanitizer_context = sanitizer_context_map.get(
-                    self.api_type, "openai_response"
-                )
-
-                sanitized_for_log = sanitize_for_logging(
-                    response_json, context=sanitizer_context
-                )
-
-                response_json_str = json.dumps(
-                    sanitized_for_log, ensure_ascii=False, indent=2
-                )
-                logger.debug(f"📋 响应JSON: {response_json_str}")
-                parsed_data = parse_response_func(response_json)
-            except Exception as e:
-                logger.error(f"解析 {log_context} 响应失败: {e}", e=e)
-                await self.key_store.record_failure(api_key, None, str(e))
-                if isinstance(e, LLMException):
-                    raise
-                else:
-                    raise LLMException(
-                        f"解析API {log_context} 响应失败: {e}",
-                        code=LLMErrorCode.RESPONSE_PARSE_ERROR,
-                        cause=e,
-                    )
-
-            logger.info(f"🎯 LLM响应解析完成 [{log_context}]")
-            return parsed_data, api_key
-
-        except LLMException:
-            raise
-        except Exception as e:
-            error_log_msg = f"生成 {log_context.lower()} 时发生未预期错误: {e}"
-            logger.error(error_log_msg, e=e)
-            await self.key_store.record_failure(api_key, None, str(e))
-            raise LLMException(
-                error_log_msg,
-                code=LLMErrorCode.GENERATION_FAILED
-                if log_context == "Generation"
-                else LLMErrorCode.EMBEDDING_FAILED,
-                cause=e,
-            )
-
-    async def _execute_embedding_request(
-        self,
-        adapter,
-        texts: list[str],
-        task_type: EmbeddingTaskType | str,
-        http_client: LLMHttpClient,
-        failed_keys: set[str] | None = None,
-    ) -> list[list[float]]:
-        """执行单次嵌入请求 - 供重试机制调用"""
-
-        async def prepare_request(api_key: str) -> RequestData:
-            return adapter.prepare_embedding_request(
-                model=self,
-                api_key=api_key,
-                texts=texts,
-                task_type=task_type,
-            )
-
-        def parse_response(response_json: dict[str, Any]) -> list[list[float]]:
-            adapter.validate_embedding_response(response_json)
-            return adapter.parse_embedding_response(response_json)
-
-        parsed_data, _api_key_used = await self._perform_api_call(
-            prepare_request_func=prepare_request,
-            parse_response_func=parse_response,
-            http_client=http_client,
-            failed_keys=failed_keys,
-            log_context="Embedding",
-        )
-        return parsed_data
-
-    async def _execute_with_smart_retry(
-        self,
-        adapter,
-        messages: list[LLMMessage],
-        config: LLMGenerationConfig | None,
-        tools: dict[str, ToolExecutable] | None,
-        tool_choice: str | dict[str, Any] | None,
-        http_client: LLMHttpClient,
-    ):
-        """智能重试机制 - 使用统一的重试装饰器"""
-        ai_config = get_ai_config()
-        max_retries = ai_config.get("max_retries_llm", 3)
-        retry_delay = ai_config.get("retry_delay_llm", 2)
-        retry_config = RetryConfig(max_retries=max_retries, retry_delay=retry_delay)
-
-        return await with_smart_retry(
-            self._execute_single_request,
-            adapter,
-            messages,
-            config,
-            tools,
-            tool_choice,
-            http_client,
-            retry_config=retry_config,
-            key_store=self.key_store,
-            provider_name=self.provider_name,
-        )
-
-    async def _execute_single_request(
-        self,
-        adapter,
-        messages: list[LLMMessage],
-        config: LLMGenerationConfig | None,
-        tools: dict[str, ToolExecutable] | None,
-        tool_choice: str | dict[str, Any] | None,
-        http_client: LLMHttpClient,
-        failed_keys: set[str] | None = None,
-    ) -> tuple[LLMResponse, str]:
-        """执行单次请求 - 供重试机制调用，直接返回 LLMResponse 和使用的 key"""
-
-        async def prepare_request(api_key: str) -> RequestData:
-            return await adapter.prepare_advanced_request(
-                model=self,
-                api_key=api_key,
-                messages=messages,
-                config=config,
-                tools=tools,
-                tool_choice=tool_choice,
-            )
-
-        def parse_response(response_json: dict[str, Any]) -> LLMResponse:
-            response_data = adapter.parse_response(
-                model=self,
-                response_json=response_json,
-                is_advanced=True,
-            )
-            from .types.models import LLMToolCall
-
-            response_tool_calls = []
-            if response_data.tool_calls:
-                for tc_data in response_data.tool_calls:
-                    if isinstance(tc_data, LLMToolCall):
-                        response_tool_calls.append(tc_data)
-                    elif isinstance(tc_data, dict):
-                        try:
-                            response_tool_calls.append(LLMToolCall(**tc_data))
-                        except Exception as e:
-                            logger.warning(
-                                f"无法将工具调用数据转换为LLMToolCall: {tc_data}, "
-                                f"error: {e}"
-                            )
-                    else:
-                        logger.warning(f"工具调用数据格式未知: {tc_data}")
-
-            return LLMResponse(
-                text=response_data.text,
-                usage_info=response_data.usage_info,
-                images=response_data.images,
-                raw_response=response_data.raw_response,
-                tool_calls=response_tool_calls if response_tool_calls else None,
-                code_executions=response_data.code_executions,
-                grounding_metadata=response_data.grounding_metadata,
-                cache_info=response_data.cache_info,
-            )
-
-        parsed_data, api_key_used = await self._perform_api_call(
-            prepare_request_func=prepare_request,
-            parse_response_func=parse_response,
-            http_client=http_client,
-            failed_keys=failed_keys,
-            log_context="Generation",
-        )
-
-        if config:
-            if config.response_validator:
-                try:
-                    config.response_validator(parsed_data)
-                except Exception as e:
-                    raise LLMException(
-                        f"响应内容未通过自定义验证器: {e}",
-                        code=LLMErrorCode.API_RESPONSE_INVALID,
-                        details={"validator_error": str(e)},
-                        cause=e,
-                    ) from e
-
-            policy = config.validation_policy
-            if policy:
-                if policy.get("require_image") and not parsed_data.images:
-                    if self.api_type == "gemini" and parsed_data.raw_response:
-                        usage_metadata = parsed_data.raw_response.get(
-                            "usageMetadata", {}
-                        )
-                        prompt_token_details = usage_metadata.get(
-                            "promptTokensDetails", []
-                        )
-                        prompt_had_image = any(
-                            detail.get("modality") == "IMAGE"
-                            for detail in prompt_token_details
-                        )
-
-                        if prompt_had_image:
-                            raise LLMException(
-                                "响应验证失败：模型接收了图片输入但未生成图片。",
-                                code=LLMErrorCode.API_RESPONSE_INVALID,
-                                details={
-                                    "policy": policy,
-                                    "text_response": parsed_data.text,
-                                    "raw_response": parsed_data.raw_response,
-                                },
-                            )
-                        else:
-                            logger.debug("Gemini提示词中未包含图片，跳过图片要求重试。")
-                    else:
-                        raise LLMException(
-                            "响应验证失败：要求返回图片但未找到图片数据。",
-                            code=LLMErrorCode.API_RESPONSE_INVALID,
-                            details={
-                                "policy": policy,
-                                "text_response": parsed_data.text,
-                            },
-                        )
-
-        return parsed_data, api_key_used
-
     async def close(self):
         """标记模型实例的当前使用周期结束"""
         if self._is_closed:
@@ -481,108 +305,102 @@ class LLMModel(LLMModelBase):
             )
             self._is_closed = False
         self._check_not_closed()
+        self._ref_count += 1
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """异步上下文管理器出口"""
         _ = exc_type, exc_val, exc_tb
-        await self.close()
+        self._ref_count -= 1
+        if self._ref_count <= 0:
+            self._ref_count = 0
+            await self.close()
 
     def _check_not_closed(self):
         """检查实例是否已关闭"""
         if self._is_closed:
             raise RuntimeError(f"LLMModel实例已关闭: {self}")
 
+    async def _execute_core_generation(self, context: LLMContext) -> LLMResponse:
+        """
+        [内核] 执行核心生成逻辑：构建管道并执行。
+        此方法作为中间件管道的终点被调用。
+        """
+        pipeline_handler = self._build_pipeline()
+        return await pipeline_handler(context)
+
     async def generate_response(
         self,
         messages: list[LLMMessage],
         config: LLMGenerationConfig | None = None,
-        tools: dict[str, ToolExecutable] | None = None,
-        tool_choice: str | dict[str, Any] | None = None,
-        **kwargs: Any,
+        tools: list[Any] | None = None,
+        tool_choice: str | dict[str, Any] | ToolChoice | None = None,
+        timeout: float | None = None,
     ) -> LLMResponse:
         """
-        生成高级响应。
-        此方法现在只执行 *单次* LLM API 调用，并将结果（包括工具调用请求）返回。
+        生成高级响应 (支持中间件管道)。
         """
         self._check_not_closed()
 
-        from .adapters import get_adapter_for_api_type
-        from .config.generation import create_generation_config_from_kwargs
+        if self._generation_config and config:
+            final_request_config = self._generation_config.merge_with(config)
+        elif config:
+            final_request_config = config
+        else:
+            final_request_config = self._generation_config or LLMGenerationConfig()
 
-        final_request_config = self._generation_config or LLMGenerationConfig()
-        if kwargs:
-            kwargs_config = create_generation_config_from_kwargs(**kwargs)
-            merged_dict = final_request_config.to_dict()
-            merged_dict.update(kwargs_config.to_dict())
-            final_request_config = LLMGenerationConfig(**merged_dict)
+        normalized_tools: list[Any] | None = None
+        if tools:
+            if isinstance(tools, dict):
+                normalized_tools = list(tools.values())
+            elif isinstance(tools, list):
+                normalized_tools = tools
+            else:
+                normalized_tools = [tools]
 
-        if config is not None:
-            merged_dict = final_request_config.to_dict()
-            merged_dict.update(config.to_dict())
-            final_request_config = LLMGenerationConfig(**merged_dict)
-
-        adapter = get_adapter_for_api_type(self.api_type)
-        http_client = await self._get_http_client()
-
-        response, _ = await self._execute_with_smart_retry(
-            adapter,
-            messages,
-            final_request_config,
-            tools,
-            tool_choice,
-            http_client,
+        context = LLMContext(
+            messages=messages,
+            config=final_request_config,
+            tools=normalized_tools,
+            tool_choice=tool_choice,
+            timeout=timeout,
         )
 
-        return response
+        return await self._execute_core_generation(context)
 
     async def generate_embeddings(
         self,
         texts: list[str],
-        task_type: EmbeddingTaskType | str = EmbeddingTaskType.RETRIEVAL_DOCUMENT,
-        **kwargs: Any,
+        config: LLMEmbeddingConfig | None = None,
     ) -> list[list[float]]:
         """生成文本嵌入向量"""
         self._check_not_closed()
         if not texts:
             return []
 
-        from .adapters import get_adapter_for_api_type
+        final_config = config or LLMEmbeddingConfig()
 
-        adapter = get_adapter_for_api_type(self.api_type)
-        if not adapter:
+        context = LLMContext(
+            messages=[],
+            config=final_config,
+            tools=None,
+            tool_choice=None,
+            timeout=None,
+            request_type="embedding",
+            extra={"texts": texts},
+        )
+
+        pipeline = self._build_pipeline()
+        response = await pipeline(context)
+        embeddings = (
+            response.cache_info.get("embeddings") if response.cache_info else None
+        )
+        if embeddings is None:
             raise LLMException(
-                f"未找到适用于 API 类型 '{self.api_type}' 的嵌入适配器",
-                code=LLMErrorCode.CONFIGURATION_ERROR,
+                "嵌入请求未返回 embeddings 数据",
+                code=LLMErrorCode.EMBEDDING_FAILED,
             )
-
-        http_client = await self._get_http_client()
-
-        ai_config = get_ai_config()
-        default_max_retries = ai_config.get("max_retries_llm", 3)
-        default_retry_delay = ai_config.get("retry_delay_llm", 2)
-        max_retries_embed = kwargs.get(
-            "max_retries_embed", max(1, default_max_retries // 2)
-        )
-        retry_delay_embed = kwargs.get("retry_delay_embed", default_retry_delay / 2)
-
-        retry_config = RetryConfig(
-            max_retries=max_retries_embed,
-            retry_delay=retry_delay_embed,
-            exponential_backoff=True,
-            key_rotation=True,
-        )
-
-        return await with_smart_retry(
-            self._execute_embedding_request,
-            adapter,
-            texts,
-            task_type,
-            http_client,
-            retry_config=retry_config,
-            key_store=self.key_store,
-            provider_name=self.provider_name,
-        )
+        return embeddings
 
     def __str__(self) -> str:
         status = "closed" if self._is_closed else "active"
@@ -594,3 +412,401 @@ class LLMModel(LLMModelBase):
             f"LLMModel(provider={self.provider_name}, model={self.model_name}, "
             f"api_type={self.api_type}, status={status})"
         )
+
+
+class RetryMiddleware(BaseLLMMiddleware):
+    """
+    重试中间件：处理异常捕获与重试循环
+    """
+
+    def __init__(self, retry_config: RetryConfig, key_store: KeyStatusStore):
+        self.retry_config = retry_config
+        self.key_store = key_store
+
+    async def __call__(self, context: LLMContext, next_call: NextCall) -> LLMResponse:
+        last_exception: Exception | None = None
+        total_attempts = self.retry_config.max_retries + 1
+
+        for attempt in range(total_attempts):
+            try:
+                context.runtime_state["attempt"] = attempt + 1
+                return await next_call(context)
+
+            except LLMException as e:
+                last_exception = e
+                api_key = context.runtime_state.get("api_key")
+
+                if api_key:
+                    status_code = e.details.get("status_code")
+                    error_msg = f"({e.code.name}) {e.message}"
+                    await self.key_store.record_failure(api_key, status_code, error_msg)
+
+                if not _should_retry_llm_error(
+                    e, attempt, self.retry_config.max_retries
+                ):
+                    raise e
+
+                if attempt == total_attempts - 1:
+                    raise e
+
+                wait_time = self.retry_config.retry_delay
+                if self.retry_config.exponential_backoff:
+                    wait_time *= 2**attempt
+
+                logger.warning(
+                    f"请求失败，{wait_time:.2f}秒后重试"
+                    f" (第{attempt + 1}/{self.retry_config.max_retries}次重试): {e}"
+                )
+                await asyncio.sleep(wait_time)
+
+            except Exception as e:
+                logger.error(f"非预期异常，停止重试: {e}", e=e)
+                raise e
+
+        if last_exception:
+            raise last_exception
+        raise LLMException("重试循环异常结束")
+
+
+class KeySelectionMiddleware(BaseLLMMiddleware):
+    """
+    密钥选择中间件：负责轮询获取可用 API Key
+    """
+
+    def __init__(
+        self, key_store: KeyStatusStore, provider_name: str, api_keys: list[str]
+    ):
+        self.key_store = key_store
+        self.provider_name = provider_name
+        self.api_keys = api_keys
+        self._failed_keys: set[str] = set()
+
+    async def __call__(self, context: LLMContext, next_call: NextCall) -> LLMResponse:
+        selected_key = await self.key_store.get_next_available_key(
+            self.provider_name, self.api_keys, exclude_keys=self._failed_keys
+        )
+
+        if not selected_key:
+            raise LLMException(
+                f"提供商 {self.provider_name} 无可用 API Key",
+                code=LLMErrorCode.NO_AVAILABLE_KEYS,
+            )
+
+        context.runtime_state["api_key"] = selected_key
+
+        try:
+            response = await next_call(context)
+            return response
+        except LLMException as e:
+            self._failed_keys.add(selected_key)
+            masked = f"{selected_key[:8]}..."
+            if isinstance(e.details, dict):
+                e.details["api_key"] = masked
+            raise e
+
+
+class LoggingMiddleware(BaseLLMMiddleware):
+    """
+    日志中间件：负责请求和响应的日志记录与脱敏
+    """
+
+    def __init__(
+        self, provider_name: str, model_name: str, log_context: str = "Generation"
+    ):
+        self.provider_name = provider_name
+        self.model_name = model_name
+        self.log_context = log_context
+
+    async def __call__(self, context: LLMContext, next_call: NextCall) -> LLMResponse:
+        attempt = context.runtime_state.get("attempt", 1)
+        api_key = context.runtime_state.get("api_key", "unknown")
+        masked_key = f"{api_key[:8]}..."
+
+        logger.info(
+            f"🌐 发起LLM请求 (尝试 {attempt}) - {self.provider_name}/{self.model_name} "
+            f"[{self.log_context}] Key: {masked_key}"
+        )
+
+        try:
+            start_time = time.monotonic()
+            response = await next_call(context)
+            duration = (time.monotonic() - start_time) * 1000
+            logger.info(f"🎯 LLM响应成功 [{self.log_context}] 耗时: {duration:.2f}ms")
+            return response
+        except Exception as e:
+            logger.error(f"❌ 请求异常 [{self.log_context}]: {type(e).__name__} - {e}")
+            raise e
+
+
+class NetworkRequestMiddleware(BaseLLMMiddleware):
+    """
+    网络请求中间件：执行 Adapter 转换和 HTTP 请求
+    """
+
+    def __init__(self, model_instance: "LLMModel", adapter: "BaseAdapter"):
+        self.model = model_instance
+        self.http_client = model_instance.http_client
+        self.adapter = adapter
+        self.key_store = model_instance.key_store
+
+    async def __call__(self, context: LLMContext, next_call: NextCall) -> LLMResponse:
+        api_key = context.runtime_state["api_key"]
+
+        request_data: RequestData
+        gen_config: LLMGenerationConfig | None = None
+        embed_config: LLMEmbeddingConfig | None = None
+
+        if context.request_type == "embedding":
+            embed_config = cast(LLMEmbeddingConfig, context.config)
+            texts = (context.extra or {}).get("texts", [])
+            request_data = self.adapter.prepare_embedding_request(
+                model=self.model,
+                api_key=api_key,
+                texts=texts,
+                config=embed_config,
+            )
+        else:
+            gen_config = cast(LLMGenerationConfig, context.config)
+            request_data = await self.adapter.prepare_advanced_request(
+                model=self.model,
+                api_key=api_key,
+                messages=context.messages,
+                config=gen_config,
+                tools=context.tools,
+                tool_choice=context.tool_choice,
+            )
+
+        masked_key = (
+            f"{api_key[:8]}...{api_key[-4:] if len(api_key) > 12 else '***'}"
+            if api_key
+            else "N/A"
+        )
+        logger.debug(f"🔑 API密钥: {masked_key}")
+        logger.debug(f"📡 请求URL: {request_data.url}")
+        logger.debug(f"📋 请求头: {dict(request_data.headers)}")
+
+        if self.model.api_type == "smart":
+            effective_type = self.model._get_effective_api_type()
+            sanitizer_req_context = f"{effective_type}_request"
+        else:
+            sanitizer_req_context = self.adapter.log_sanitization_context
+        sanitized_body = sanitize_for_logging(
+            request_data.body, context=sanitizer_req_context
+        )
+
+        if request_data.files and isinstance(sanitized_body, dict):
+            file_info: list[str] = []
+            file_count = 0
+            if isinstance(request_data.files, list):
+                file_count = len(request_data.files)
+                for key, value in request_data.files:
+                    filename = (
+                        value[0]
+                        if isinstance(value, tuple) and len(value) > 0
+                        else "..."
+                    )
+                    file_info.append(f"{key}='{filename}'")
+            elif isinstance(request_data.files, dict):
+                file_count = len(request_data.files)
+                file_info = list(request_data.files.keys())
+
+            sanitized_body["[MULTIPART_FILES]"] = f"Count: {file_count} | {file_info}"
+
+        request_body_str = dump_json_safely(
+            sanitized_body, ensure_ascii=False, indent=2
+        )
+        logger.debug(f"📦 请求体: {request_body_str}")
+
+        start_time = time.monotonic()
+        try:
+            http_response = await self.http_client.post(
+                request_data.url,
+                headers=request_data.headers,
+                content=dump_json_safely(request_data.body, ensure_ascii=False)
+                if not request_data.files
+                else None,
+                data=request_data.body if request_data.files else None,
+                files=request_data.files,
+                timeout=context.timeout,
+            )
+
+            logger.debug(f"📥 响应状态码: {http_response.status_code}")
+
+            if exception := self.adapter.handle_http_error(http_response):
+                error_text = http_response.content.decode("utf-8", errors="ignore")
+                logger.debug(f"💥 完整错误响应: {error_text}")
+                await self.key_store.record_failure(
+                    api_key, http_response.status_code, error_text
+                )
+                raise exception
+
+            response_bytes = await http_response.aread()
+            logger.debug(f"📦 响应体已完整读取 ({len(response_bytes)} bytes)")
+
+            response_json = json.loads(response_bytes)
+
+            sanitizer_resp_context = sanitizer_req_context.replace(
+                "_request", "_response"
+            )
+            if sanitizer_resp_context == sanitizer_req_context:
+                sanitizer_resp_context = f"{sanitizer_req_context}_response"
+
+            sanitized_response = sanitize_for_logging(
+                response_json, context=sanitizer_resp_context
+            )
+            response_json_str = json.dumps(
+                sanitized_response, ensure_ascii=False, indent=2
+            )
+            logger.debug(f"📋 响应JSON: {response_json_str}")
+
+            if context.request_type == "embedding":
+                self.adapter.validate_embedding_response(response_json)
+                embeddings = self.adapter.parse_embedding_response(response_json)
+                latency = (time.monotonic() - start_time) * 1000
+                await self.key_store.record_success(api_key, latency)
+
+                return LLMResponse(
+                    text="",
+                    raw_response=response_json,
+                    cache_info={"embeddings": embeddings},
+                )
+
+            response_data = self.adapter.parse_response(
+                self.model, response_json, is_advanced=True
+            )
+
+            should_rescue_image = (
+                gen_config
+                and gen_config.validation_policy
+                and gen_config.validation_policy.get("require_image")
+            )
+            if (
+                should_rescue_image
+                and not response_data.images
+                and response_data.text
+                and gen_config
+            ):
+                markdown_matches = re.findall(
+                    r"(!?\[.*?\]\((https?://[^\)]+)\))", response_data.text
+                )
+                if markdown_matches:
+                    logger.info(
+                        f"检测到 {len(markdown_matches)} "
+                        "个资源链接，尝试自动下载并清洗。"
+                    )
+                    if response_data.images is None:
+                        response_data.images = []
+
+                    downloaded_urls = set()
+                    for full_tag, url in markdown_matches:
+                        try:
+                            if url not in downloaded_urls:
+                                content = await AsyncHttpx.get_content(url)
+                                response_data.images.append(process_image_data(content))
+                                downloaded_urls.add(url)
+                            response_data.text = response_data.text.replace(
+                                full_tag, ""
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                f"自动下载生成的图片失败: {url}, 错误: {exc}"
+                            )
+                    response_data.text = response_data.text.strip()
+
+            latency = (time.monotonic() - start_time) * 1000
+            await self.key_store.record_success(api_key, latency)
+
+            response_tool_calls: list[LLMToolCall] = []
+            if response_data.tool_calls:
+                for tc_data in response_data.tool_calls:
+                    if isinstance(tc_data, LLMToolCall):
+                        response_tool_calls.append(tc_data)
+                    elif isinstance(tc_data, dict):
+                        try:
+                            response_tool_calls.append(LLMToolCall(**tc_data))
+                        except Exception:
+                            pass
+
+            final_response = LLMResponse(
+                text=response_data.text,
+                content_parts=response_data.content_parts,
+                usage_info=response_data.usage_info,
+                images=response_data.images,
+                raw_response=response_data.raw_response,
+                tool_calls=response_tool_calls if response_tool_calls else None,
+                code_executions=response_data.code_executions,
+                grounding_metadata=response_data.grounding_metadata,
+                cache_info=response_data.cache_info,
+                thought_text=response_data.thought_text,
+                thought_signature=response_data.thought_signature,
+            )
+
+            if context.request_type == "generation" and gen_config:
+                if gen_config.response_validator:
+                    try:
+                        gen_config.response_validator(final_response)
+                    except Exception as exc:
+                        raise LLMException(
+                            f"响应内容未通过自定义验证器: {exc}",
+                            code=LLMErrorCode.API_RESPONSE_INVALID,
+                            details={"validator_error": str(exc)},
+                            cause=exc,
+                        ) from exc
+
+                policy = gen_config.validation_policy
+                if policy:
+                    effective_type = self.model._get_effective_api_type()
+                    if policy.get("require_image") and not final_response.images:
+                        if effective_type == "gemini" and response_data.raw_response:
+                            usage_metadata = response_data.raw_response.get(
+                                "usageMetadata", {}
+                            )
+                            prompt_token_details = usage_metadata.get(
+                                "promptTokensDetails", []
+                            )
+                            prompt_had_image = any(
+                                detail.get("modality") == "IMAGE"
+                                for detail in prompt_token_details
+                            )
+
+                            if prompt_had_image:
+                                raise LLMException(
+                                    "响应验证失败：模型接收了图片输入但未生成图片。",
+                                    code=LLMErrorCode.API_RESPONSE_INVALID,
+                                    details={
+                                        "policy": policy,
+                                        "text_response": final_response.text,
+                                        "raw_response": response_data.raw_response,
+                                    },
+                                )
+                            else:
+                                logger.debug(
+                                    "Gemini提示词中未包含图片，跳过图片要求重试。"
+                                )
+                        else:
+                            raise LLMException(
+                                "响应验证失败：要求返回图片但未找到图片数据。",
+                                code=LLMErrorCode.API_RESPONSE_INVALID,
+                                details={
+                                    "policy": policy,
+                                    "text_response": final_response.text,
+                                },
+                            )
+
+            return final_response
+
+        except Exception as e:
+            if isinstance(e, LLMException):
+                raise e
+
+            logger.error(f"解析响应失败或发生未知错误: {e}")
+
+            if not isinstance(e, httpx.NetworkError | httpx.TimeoutException):
+                await self.key_store.record_failure(api_key, None, str(e))
+
+            raise LLMException(
+                f"网络请求异常: {type(e).__name__} - {e}",
+                code=LLMErrorCode.API_REQUEST_FAILED,
+                details={"api_key": masked_key},
+                cause=e,
+            )

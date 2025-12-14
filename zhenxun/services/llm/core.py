@@ -254,7 +254,7 @@ class KeyStats:
         if total_calls == 0:
             return KeyStatus.UNUSED
 
-        if self.success_rate < 80:
+        if self.success_rate < 70:
             return KeyStatus.ERROR
 
         if total_calls >= 5 and self.avg_latency > 15000:
@@ -292,96 +292,6 @@ class RetryConfig:
         self.key_rotation = key_rotation
 
 
-async def with_smart_retry(
-    func,
-    *args,
-    retry_config: RetryConfig | None = None,
-    key_store: "KeyStatusStore | None" = None,
-    provider_name: str | None = None,
-    **kwargs: Any,
-) -> Any:
-    """
-    智能重试装饰器 - 支持Key轮询和错误分类
-
-    参数:
-        func: 要重试的异步函数。
-        *args: 传递给函数的位置参数。
-        retry_config: 重试配置。
-        key_store: API密钥状态存储。
-        provider_name: 提供商名称。
-        **kwargs: 传递给函数的关键字参数。
-
-    返回:
-        Any: 函数执行结果。
-    """
-    config = retry_config or RetryConfig()
-    last_exception: Exception | None = None
-    failed_keys: set[str] = set()
-
-    model_instance = next((arg for arg in args if hasattr(arg, "api_keys")), None)
-    all_provider_keys = model_instance.api_keys if model_instance else []
-
-    for attempt in range(config.max_retries + 1):
-        try:
-            if config.key_rotation and "failed_keys" in func.__code__.co_varnames:
-                kwargs["failed_keys"] = failed_keys
-
-            start_time = time.monotonic()
-            result = await func(*args, **kwargs)
-            latency = (time.monotonic() - start_time) * 1000
-
-            if key_store and isinstance(result, tuple) and len(result) == 2:
-                _, api_key_used = result
-                if api_key_used:
-                    await key_store.record_success(api_key_used, latency)
-                return result
-            else:
-                return result
-
-        except LLMException as e:
-            last_exception = e
-            api_key_in_use = e.details.get("api_key")
-
-            if api_key_in_use:
-                failed_keys.add(api_key_in_use)
-                if key_store and provider_name and len(all_provider_keys) > 1:
-                    status_code = e.details.get("status_code")
-                    error_message = f"({e.code.name}) {e.message}"
-                    await key_store.record_failure(
-                        api_key_in_use, status_code, error_message
-                    )
-
-            should_retry = _should_retry_llm_error(e, attempt, config.max_retries)
-            if not should_retry:
-                logger.error(f"不可重试的错误，停止重试: {e}")
-                raise
-
-            if attempt < config.max_retries:
-                wait_time = config.retry_delay
-                if config.exponential_backoff:
-                    wait_time *= 2**attempt
-                logger.warning(
-                    f"请求失败，{wait_time:.2f}秒后重试 (第{attempt + 1}次): {e}"
-                )
-                await asyncio.sleep(wait_time)
-            else:
-                logger.error(f"重试{config.max_retries}次后仍然失败: {e}")
-
-        except Exception as e:
-            last_exception = e
-            logger.error(f"非LLM异常，停止重试: {e}")
-            raise LLMException(
-                f"操作失败: {e}",
-                code=LLMErrorCode.GENERATION_FAILED,
-                cause=e,
-            )
-
-    if last_exception:
-        raise last_exception
-    else:
-        raise RuntimeError("重试函数未能正常执行且未捕获到异常")
-
-
 def _should_retry_llm_error(
     error: LLMException, attempt: int, max_retries: int
 ) -> bool:
@@ -390,7 +300,9 @@ def _should_retry_llm_error(
         LLMErrorCode.MODEL_NOT_FOUND,
         LLMErrorCode.CONTEXT_LENGTH_EXCEEDED,
         LLMErrorCode.USER_LOCATION_NOT_SUPPORTED,
+        LLMErrorCode.INVALID_PARAMETER,
         LLMErrorCode.CONFIGURATION_ERROR,
+        LLMErrorCode.API_KEY_INVALID,
     }
 
     if error.code in non_retryable_errors:
@@ -404,15 +316,12 @@ def _should_retry_llm_error(
         LLMErrorCode.RESPONSE_PARSE_ERROR,
         LLMErrorCode.GENERATION_FAILED,
         LLMErrorCode.CONTENT_FILTERED,
-        LLMErrorCode.API_KEY_INVALID,
         LLMErrorCode.API_QUOTA_EXCEEDED,
     }
 
     if error.code in retryable_errors:
         if error.code == LLMErrorCode.API_QUOTA_EXCEEDED:
             return attempt < min(2, max_retries)
-        elif error.code == LLMErrorCode.CONTENT_FILTERED:
-            return attempt < min(1, max_retries)
         return True
 
     return False
@@ -558,14 +467,68 @@ class KeyStatusStore:
         now = time.time()
         cooldown_duration = 300
 
-        if status_code in [401, 403, 404]:
+        location_not_supported = error_message and (
+            "USER_LOCATION_NOT_SUPPORTED" in error_message
+            or "User location is not supported" in error_message
+        )
+        if location_not_supported:
+            logger.warning(
+                f"API Key {key_id} 请求失败，原因是地区不支持 (Gemini)。"
+                " 这通常是代理节点问题，Key 本身可能是正常的。跳过冷却。"
+            )
+            async with self._lock:
+                stats = self._key_stats.setdefault(api_key, KeyStats())
+                stats.failure_count += 1
+                stats.last_error_info = error_message[:256]
+                await self._save_to_file_internal()
+            return
+
+        if error_message and (
+            "API_QUOTA_EXCEEDED" in error_message
+            or "insufficient_quota" in error_message.lower()
+        ):
+            cooldown_duration = 3600
+            logger.warning(f"API Key {key_id} 额度耗尽，冷却 1 小时。")
+
+        is_key_invalid = status_code == 401 or (
+            status_code == 400
+            and error_message
+            and (
+                "API_KEY_INVALID" in error_message
+                or "API key not valid" in error_message
+            )
+        )
+
+        if is_key_invalid:
             cooldown_duration = 31536000
             log_level = "error"
             log_message = f"API密钥认证/权限/路径错误，将永久禁用: {key_id}"
+        elif status_code == 403:
+            cooldown_duration = 3600
+            log_level = "warning"
+            log_message = f"API密钥权限不足或地区不支持(403)，冷却1小时: {key_id}"
+        elif status_code == 404:
+            log_level = "error"
+            log_message = "API请求返回 404 (未找到)，可能是模型名称错误或接口地址"
+            f"错误，不冷却密钥: {key_id}"
+        elif status_code == 422:
+            cooldown_duration = 0
+            log_level = "warning"
+            log_message = f"API请求无法处理(422)，可能是生成故障，不冷却密钥: {key_id}"
         elif status_code == 429:
             cooldown_duration = 60
             log_level = "warning"
             log_message = f"API密钥被限流，冷却60秒: {key_id}"
+        elif error_message and (
+            "ConnectError" in error_message
+            or "NetworkError" in error_message
+            or "Connection refused" in error_message
+            or "RemoteProtocolError" in error_message
+            or "ProxyError" in error_message
+        ):
+            cooldown_duration = 0
+            log_level = "warning"
+            log_message = f"网络连接层异常(代理/DNS)，不冷却密钥: {key_id}"
         else:
             log_level = "warning"
             log_message = f"API密钥遇到临时性错误，冷却{cooldown_duration}秒: {key_id}"

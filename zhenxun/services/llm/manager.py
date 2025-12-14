@@ -13,15 +13,19 @@ from zhenxun.services.log import logger
 from zhenxun.utils.pydantic_compat import dump_json_safely
 
 from .config import validate_override_params
-from .config.providers import AI_CONFIG_GROUP, PROVIDERS_CONFIG_KEY, get_ai_config
+from .config.generation import LLMGenerationConfig
+from .config.providers import (
+    AI_CONFIG_GROUP,
+    PROVIDERS_CONFIG_KEY,
+    get_ai_config,
+    get_llm_config,
+)
 from .core import http_client_manager, key_store
 from .service import LLMModel
 from .types import LLMErrorCode, LLMException, ModelDetail, ProviderConfig
 from .types.capabilities import get_model_capabilities
 
 DEFAULT_MODEL_NAME_KEY = "default_model_name"
-PROXY_KEY = "proxy"
-TIMEOUT_KEY = "timeout"
 
 _model_cache: dict[str, tuple[LLMModel, float]] = {}
 _cache_ttl = 3600
@@ -39,7 +43,8 @@ def parse_provider_model_string(name_str: str | None) -> tuple[str | None, str |
 
 
 def _make_cache_key(
-    provider_model_name: str | None, override_config: dict | None
+    provider_model_name: str | None,
+    override_config: dict | LLMGenerationConfig | None,
 ) -> str:
     """生成缓存键"""
     config_str = (
@@ -115,11 +120,12 @@ def get_default_api_base_for_type(api_type: str) -> str | None:
     """根据API类型获取默认的API基础地址"""
     default_api_bases = {
         "openai": "https://api.openai.com",
-        "deepseek": "https://api.deepseek.com",
+        "deepseek": "https://api.deepseek.com/beta",
         "zhipu": "https://open.bigmodel.cn",
         "gemini": "https://generativelanguage.googleapis.com",
         "openrouter": "https://openrouter.ai/api",
-        "general_openai_compat": None,
+        "smart": None,
+        "openai_responses": None,
     }
 
     return default_api_bases.get(api_type)
@@ -244,7 +250,7 @@ def list_embedding_models() -> list[dict[str, Any]]:
 
 async def get_model_instance(
     provider_model_name: str | None = None,
-    override_config: dict[str, Any] | None = None,
+    override_config: dict[str, Any] | LLMGenerationConfig | None = None,
 ) -> LLMModel:
     """
     根据 'ProviderName/ModelName' 字符串获取并实例化 LLMModel (异步版本)
@@ -303,21 +309,20 @@ async def get_model_instance(
 
     model_detail_found.is_embedding_model = capabilities.is_embedding_model
 
-    ai_config = get_ai_config()
-    global_proxy_setting = ai_config.get(PROXY_KEY)
+    llm_config = get_llm_config()
+    client_settings = llm_config.client_settings
     default_timeout = (
         provider_config_found.timeout
         if provider_config_found.timeout is not None
-        else 180
+        else client_settings.timeout
     )
-    global_timeout_setting = ai_config.get(TIMEOUT_KEY, default_timeout)
 
     config_for_http_client = ProviderConfig(
         name=provider_config_found.name,
         api_key=provider_config_found.api_key,
         models=provider_config_found.models,
-        timeout=global_timeout_setting,
-        proxy=global_proxy_setting,
+        timeout=default_timeout,
+        proxy=client_settings.proxy,
         api_base=provider_config_found.api_base,
         api_type=provider_config_found.api_type,
         openai_compat=provider_config_found.openai_compat,

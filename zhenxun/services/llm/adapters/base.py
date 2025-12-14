@@ -3,24 +3,26 @@ LLM 适配器基类和通用数据结构
 """
 
 from abc import ABC, abstractmethod
-import base64
-import binascii
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+import uuid
 
+import httpx
 from pydantic import BaseModel
 
+from zhenxun.configs.path_config import TEMP_PATH
 from zhenxun.services.log import logger
 
+from ..types import LLMContentPart
 from ..types.exceptions import LLMErrorCode, LLMException
 from ..types.models import LLMToolCall
 
 if TYPE_CHECKING:
-    from ..config.generation import LLMGenerationConfig
+    from ..config.generation import LLMEmbeddingConfig, LLMGenerationConfig
     from ..service import LLMModel
-    from ..types.content import LLMMessage
-    from ..types.enums import EmbeddingTaskType
-    from ..types.protocols import ToolExecutable
+    from ..types import LLMMessage
+    from ..types.models import ToolChoice
 
 
 class RequestData(BaseModel):
@@ -29,19 +31,23 @@ class RequestData(BaseModel):
     url: str
     headers: dict[str, str]
     body: dict[str, Any]
+    files: dict[str, Any] | list[tuple[str, Any]] | None = None
 
 
 class ResponseData(BaseModel):
     """响应数据封装 - 支持所有高级功能"""
 
     text: str
-    images: list[bytes] | None = None
+    content_parts: list[LLMContentPart] | None = None
+    images: list[bytes | Path] | None = None
     usage_info: dict[str, Any] | None = None
     raw_response: dict[str, Any] | None = None
     tool_calls: list[LLMToolCall] | None = None
     code_executions: list[Any] | None = None
     grounding_metadata: Any | None = None
     cache_info: Any | None = None
+    thought_text: str | None = None
+    thought_signature: str | None = None
 
     code_execution_results: list[dict[str, Any]] | None = None
     search_results: list[dict[str, Any]] | None = None
@@ -50,8 +56,32 @@ class ResponseData(BaseModel):
     citations: list[dict[str, Any]] | None = None
 
 
+def process_image_data(image_data: bytes) -> bytes | Path:
+    """
+    处理图片数据：若超过 2MB 则保存到临时目录，避免占用内存。
+    """
+    max_inline_size = 2 * 1024 * 1024
+    if len(image_data) > max_inline_size:
+        save_dir = TEMP_PATH / "llm"
+        save_dir.mkdir(parents=True, exist_ok=True)
+        file_name = f"{uuid.uuid4()}.png"
+        file_path = save_dir / file_name
+        file_path.write_bytes(image_data)
+        logger.info(
+            f"图片数据过大 ({len(image_data)} bytes)，已保存到临时文件: {file_path}",
+            "LLMAdapter",
+        )
+        return file_path.resolve()
+    return image_data
+
+
 class BaseAdapter(ABC):
     """LLM API适配器基类"""
+
+    @property
+    def log_sanitization_context(self) -> str:
+        """用于日志清洗的上下文名称，默认 'default'"""
+        return "default"
 
     @property
     @abstractmethod
@@ -77,7 +107,7 @@ class BaseAdapter(ABC):
         默认实现：将简单请求转换为高级请求格式
         子类可以重写此方法以提供特定的优化实现
         """
-        from ..types.content import LLMMessage
+        from ..types import LLMMessage
 
         messages: list[LLMMessage] = []
 
@@ -107,8 +137,8 @@ class BaseAdapter(ABC):
         api_key: str,
         messages: list["LLMMessage"],
         config: "LLMGenerationConfig | None" = None,
-        tools: dict[str, "ToolExecutable"] | None = None,
-        tool_choice: str | dict[str, Any] | None = None,
+        tools: list[Any] | None = None,
+        tool_choice: "str | dict[str, Any] | ToolChoice | None" = None,
     ) -> RequestData:
         """准备高级请求"""
         pass
@@ -129,8 +159,7 @@ class BaseAdapter(ABC):
         model: "LLMModel",
         api_key: str,
         texts: list[str],
-        task_type: "EmbeddingTaskType | str",
-        **kwargs: Any,
+        config: "LLMEmbeddingConfig",
     ) -> RequestData:
         """准备文本嵌入请求"""
         pass
@@ -142,9 +171,16 @@ class BaseAdapter(ABC):
         """解析文本嵌入响应"""
         pass
 
+    @abstractmethod
+    def convert_generation_config(
+        self, config: "LLMGenerationConfig", model: "LLMModel"
+    ) -> dict[str, Any]:
+        """将通用生成配置转换为特定API的参数字典"""
+        pass
+
     def validate_embedding_response(self, response_json: dict[str, Any]) -> None:
         """验证嵌入API响应"""
-        if "error" in response_json:
+        if response_json.get("error"):
             error_info = response_json["error"]
             msg = (
                 error_info.get("message", str(error_info))
@@ -179,158 +215,9 @@ class BaseAdapter(ABC):
         )
         return headers
 
-    def convert_messages_to_openai_format(
-        self, messages: list["LLMMessage"]
-    ) -> list[dict[str, Any]]:
-        """将LLMMessage转换为OpenAI格式 - 通用方法"""
-        openai_messages: list[dict[str, Any]] = []
-        for msg in messages:
-            openai_msg: dict[str, Any] = {"role": msg.role}
-
-            if msg.role == "tool":
-                openai_msg["tool_call_id"] = msg.tool_call_id
-                openai_msg["name"] = msg.name
-                openai_msg["content"] = msg.content
-            else:
-                if isinstance(msg.content, str):
-                    openai_msg["content"] = msg.content
-                else:
-                    content_parts = []
-                    for part in msg.content:
-                        if part.type == "text":
-                            content_parts.append({"type": "text", "text": part.text})
-                        elif part.type == "image":
-                            content_parts.append(
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": part.image_source},
-                                }
-                            )
-                    openai_msg["content"] = content_parts
-
-            if msg.role == "assistant" and msg.tool_calls:
-                assistant_tool_calls = []
-                for call in msg.tool_calls:
-                    assistant_tool_calls.append(
-                        {
-                            "id": call.id,
-                            "type": "function",
-                            "function": {
-                                "name": call.function.name,
-                                "arguments": call.function.arguments,
-                            },
-                        }
-                    )
-                openai_msg["tool_calls"] = assistant_tool_calls
-
-            if msg.name and msg.role != "tool":
-                openai_msg["name"] = msg.name
-
-            openai_messages.append(openai_msg)
-        return openai_messages
-
-    def parse_openai_response(self, response_json: dict[str, Any]) -> ResponseData:
-        """解析OpenAI格式的响应 - 通用方法"""
-        self.validate_response(response_json)
-
-        try:
-            choices = response_json.get("choices", [])
-            if not choices:
-                logger.debug("OpenAI响应中没有choices，可能为空回复或流结束。")
-                return ResponseData(text="", raw_response=response_json)
-
-            choice = choices[0]
-            message = choice.get("message", {})
-            content = message.get("content", "")
-
-            if content:
-                content = content.strip()
-
-            images_bytes: list[bytes] = []
-            if content and content.startswith("{") and content.endswith("}"):
-                try:
-                    content_json = json.loads(content)
-                    if "b64_json" in content_json:
-                        images_bytes.append(base64.b64decode(content_json["b64_json"]))
-                        content = "[图片已生成]"
-                    elif "data" in content_json and isinstance(
-                        content_json["data"], str
-                    ):
-                        images_bytes.append(base64.b64decode(content_json["data"]))
-                        content = "[图片已生成]"
-
-                except (json.JSONDecodeError, KeyError, binascii.Error):
-                    pass
-            elif (
-                "images" in message
-                and isinstance(message["images"], list)
-                and message["images"]
-            ):
-                image_info = message["images"][0]
-                if image_info.get("type") == "image_url":
-                    image_url_obj = image_info.get("image_url", {})
-                    url_str = image_url_obj.get("url", "")
-                    if url_str.startswith("data:image/png;base64,"):
-                        try:
-                            b64_data = url_str.split(",", 1)[1]
-                            images_bytes.append(base64.b64decode(b64_data))
-                            content = content if content else "[图片已生成]"
-                        except (IndexError, binascii.Error) as e:
-                            logger.warning(f"解析OpenRouter Base64图片数据失败: {e}")
-
-            parsed_tool_calls: list[LLMToolCall] | None = None
-            if message_tool_calls := message.get("tool_calls"):
-                from ..types.models import LLMToolFunction
-
-                parsed_tool_calls = []
-                for tc_data in message_tool_calls:
-                    try:
-                        if tc_data.get("type") == "function":
-                            parsed_tool_calls.append(
-                                LLMToolCall(
-                                    id=tc_data["id"],
-                                    function=LLMToolFunction(
-                                        name=tc_data["function"]["name"],
-                                        arguments=tc_data["function"]["arguments"],
-                                    ),
-                                )
-                            )
-                    except KeyError as e:
-                        logger.warning(
-                            f"解析OpenAI工具调用数据时缺少键: {tc_data}, 错误: {e}"
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"解析OpenAI工具调用数据时出错: {tc_data}, 错误: {e}"
-                        )
-                if not parsed_tool_calls:
-                    parsed_tool_calls = None
-
-            final_text = content if content is not None else ""
-            if not final_text and parsed_tool_calls:
-                final_text = f"请求调用 {len(parsed_tool_calls)} 个工具。"
-
-            usage_info = response_json.get("usage")
-
-            return ResponseData(
-                text=final_text,
-                tool_calls=parsed_tool_calls,
-                usage_info=usage_info,
-                images=images_bytes if images_bytes else None,
-                raw_response=response_json,
-            )
-
-        except Exception as e:
-            logger.error(f"解析OpenAI格式响应失败: {e}", e=e)
-            raise LLMException(
-                f"解析API响应失败: {e}",
-                code=LLMErrorCode.RESPONSE_PARSE_ERROR,
-                cause=e,
-            )
-
     def validate_response(self, response_json: dict[str, Any]) -> None:
         """验证API响应，解析不同API的错误结构"""
-        if "error" in response_json:
+        if response_json.get("error"):
             error_info = response_json["error"]
 
             if isinstance(error_info, dict):
@@ -341,12 +228,15 @@ class BaseAdapter(ABC):
                 error_code_mapping = {
                     "invalid_api_key": LLMErrorCode.API_KEY_INVALID,
                     "authentication_failed": LLMErrorCode.API_KEY_INVALID,
+                    "insufficient_quota": LLMErrorCode.API_QUOTA_EXCEEDED,
                     "rate_limit_exceeded": LLMErrorCode.API_RATE_LIMITED,
                     "quota_exceeded": LLMErrorCode.API_RATE_LIMITED,
                     "model_not_found": LLMErrorCode.MODEL_NOT_FOUND,
                     "invalid_model": LLMErrorCode.MODEL_NOT_FOUND,
                     "context_length_exceeded": LLMErrorCode.CONTEXT_LENGTH_EXCEEDED,
                     "max_tokens_exceeded": LLMErrorCode.CONTEXT_LENGTH_EXCEEDED,
+                    "invalid_request_error": LLMErrorCode.INVALID_PARAMETER,
+                    "invalid_parameter": LLMErrorCode.INVALID_PARAMETER,
                 }
 
                 llm_error_code = error_code_mapping.get(
@@ -405,23 +295,12 @@ class BaseAdapter(ABC):
     ) -> dict[str, Any]:
         """通用的配置应用逻辑"""
         if config is not None:
-            return config.to_api_params(model.api_type, model.model_name)
+            return self.convert_generation_config(config, model)
 
-        if model._generation_config is not None:
-            return model._generation_config.to_api_params(
-                model.api_type, model.model_name
-            )
+        if model._generation_config:
+            return self.convert_generation_config(model._generation_config, model)
 
-        base_config = {}
-        if model.temperature is not None:
-            base_config["temperature"] = model.temperature
-        if model.max_tokens is not None:
-            if model.api_type == "gemini":
-                base_config["maxOutputTokens"] = model.max_tokens
-            else:
-                base_config["max_tokens"] = model.max_tokens
-
-        return base_config
+        return {}
 
     def apply_config_override(
         self,
@@ -434,11 +313,95 @@ class BaseAdapter(ABC):
         body.update(config_params)
         return body
 
+    def handle_http_error(self, response: httpx.Response) -> LLMException | None:
+        """
+        处理 HTTP 错误响应。
+        如果响应状态码表示成功 (200)，返回 None；否则构造 LLMException 供外部捕获。
+        """
+        if response.status_code == 200:
+            return None
+
+        error_text = response.content.decode("utf-8", errors="ignore")
+        error_status = ""
+        error_msg = error_text
+        try:
+            error_json = json.loads(error_text)
+            if isinstance(error_json, dict) and "error" in error_json:
+                error_info = error_json["error"]
+                if isinstance(error_info, dict):
+                    error_msg = error_info.get("message", error_msg)
+                    raw_status = error_info.get("status") or error_info.get("code")
+                    error_status = str(raw_status) if raw_status is not None else ""
+                elif error_info is not None:
+                    error_msg = str(error_info)
+                    error_status = error_msg
+        except Exception:
+            pass
+
+        status_upper = error_status.upper() if error_status else ""
+        text_upper = error_text.upper()
+
+        error_code = LLMErrorCode.API_REQUEST_FAILED
+        if response.status_code == 400:
+            if (
+                "FAILED_PRECONDITION" in status_upper
+                or "LOCATION IS NOT SUPPORTED" in text_upper
+            ):
+                error_code = LLMErrorCode.USER_LOCATION_NOT_SUPPORTED
+            elif "INVALID_ARGUMENT" in status_upper:
+                error_code = LLMErrorCode.INVALID_PARAMETER
+            elif "API_KEY_INVALID" in text_upper or "API KEY NOT VALID" in text_upper:
+                error_code = LLMErrorCode.API_KEY_INVALID
+            else:
+                error_code = LLMErrorCode.INVALID_PARAMETER
+        elif response.status_code in [401, 403]:
+            if error_msg and (
+                "country" in error_msg.lower()
+                or "region" in error_msg.lower()
+                or "unsupported" in error_msg.lower()
+            ):
+                error_code = LLMErrorCode.USER_LOCATION_NOT_SUPPORTED
+            elif "PERMISSION_DENIED" in status_upper:
+                error_code = LLMErrorCode.API_KEY_INVALID
+            else:
+                error_code = LLMErrorCode.API_KEY_INVALID
+        elif response.status_code == 404:
+            error_code = LLMErrorCode.MODEL_NOT_FOUND
+        elif response.status_code == 429:
+            if (
+                "RESOURCE_EXHAUSTED" in status_upper
+                or "INSUFFICIENT_QUOTA" in status_upper
+                or ("quota" in error_msg.lower() if error_msg else False)
+            ):
+                error_code = LLMErrorCode.API_QUOTA_EXCEEDED
+            else:
+                error_code = LLMErrorCode.API_RATE_LIMITED
+        elif response.status_code in [402, 413]:
+            error_code = LLMErrorCode.API_QUOTA_EXCEEDED
+        elif response.status_code == 422:
+            error_code = LLMErrorCode.GENERATION_FAILED
+        elif response.status_code >= 500:
+            error_code = LLMErrorCode.API_TIMEOUT
+
+        return LLMException(
+            f"HTTP请求失败: {response.status_code} ({error_status or 'Unknown'})",
+            code=error_code,
+            details={
+                "status_code": response.status_code,
+                "api_status": error_status,
+                "response": error_text,
+            },
+        )
+
 
 class OpenAICompatAdapter(BaseAdapter):
     """
     处理所有 OpenAI 兼容 API 的通用适配器。
     """
+
+    @property
+    def log_sanitization_context(self) -> str:
+        return "openai_request"
 
     @abstractmethod
     def get_chat_endpoint(self, model: "LLMModel") -> str:
@@ -481,8 +444,8 @@ class OpenAICompatAdapter(BaseAdapter):
         api_key: str,
         messages: list["LLMMessage"],
         config: "LLMGenerationConfig | None" = None,
-        tools: dict[str, "ToolExecutable"] | None = None,
-        tool_choice: str | dict[str, Any] | None = None,
+        tools: list[Any] | None = None,
+        tool_choice: "str | dict[str, Any] | ToolChoice | None" = None,
     ) -> RequestData:
         """准备高级请求 - OpenAI兼容格式"""
         url = self.get_api_url(model, self.get_chat_endpoint(model))
@@ -494,27 +457,43 @@ class OpenAICompatAdapter(BaseAdapter):
                     "X-Title": "Zhenxun Bot",
                 }
             )
-        openai_messages = self.convert_messages_to_openai_format(messages)
+        from .components.openai_components import OpenAIMessageConverter
+
+        converter = OpenAIMessageConverter()
+        openai_messages = converter.convert_messages(messages)
 
         body = {
             "model": model.model_name,
             "messages": openai_messages,
         }
 
+        openai_tools: list[dict[str, Any]] | None = None
+        executables: list[Any] = []
         if tools:
+            for tool in tools:
+                if hasattr(tool, "get_definition"):
+                    executables.append(tool)
+
+        if executables:
             import asyncio
 
             from zhenxun.utils.pydantic_compat import model_dump
 
             definition_tasks = [
-                executable.get_definition() for executable in tools.values()
+                executable.get_definition() for executable in executables
             ]
-            openai_tools = await asyncio.gather(*definition_tasks)
-            if openai_tools:
-                body["tools"] = [
+            tool_defs = []
+            if definition_tasks:
+                tool_defs = await asyncio.gather(*definition_tasks)
+
+            if tool_defs:
+                openai_tools = [
                     {"type": "function", "function": model_dump(tool)}
-                    for tool in openai_tools
+                    for tool in tool_defs
                 ]
+
+        if openai_tools:
+            body["tools"] = openai_tools
 
         if tool_choice:
             body["tool_choice"] = tool_choice
@@ -528,20 +507,21 @@ class OpenAICompatAdapter(BaseAdapter):
         response_json: dict[str, Any],
         is_advanced: bool = False,
     ) -> ResponseData:
-        """解析响应 - 直接使用基类的 OpenAI 格式解析"""
+        """解析响应 - 直接使用组件化 ResponseParser"""
         _ = model, is_advanced
-        return self.parse_openai_response(response_json)
+        from .components.openai_components import OpenAIResponseParser
+
+        parser = OpenAIResponseParser()
+        return parser.parse(response_json)
 
     def prepare_embedding_request(
         self,
         model: "LLMModel",
         api_key: str,
         texts: list[str],
-        task_type: "EmbeddingTaskType | str",
-        **kwargs: Any,
+        config: "LLMEmbeddingConfig",
     ) -> RequestData:
         """准备嵌入请求 - OpenAI兼容格式"""
-        _ = task_type
         url = self.get_api_url(model, self.get_embedding_endpoint(model))
         headers = self.get_base_headers(api_key)
 
@@ -550,8 +530,14 @@ class OpenAICompatAdapter(BaseAdapter):
             "input": texts,
         }
 
-        if kwargs:
-            body.update(kwargs)
+        if config.output_dimensionality:
+            body["dimensions"] = config.output_dimensionality
+
+        if config.task_type:
+            body["task"] = config.task_type
+
+        if config.encoding_format and config.encoding_format != "float":
+            body["encoding_format"] = config.encoding_format
 
         return RequestData(url=url, headers=headers, body=body)
 

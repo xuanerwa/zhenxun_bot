@@ -2,9 +2,96 @@
 LLM 模块的协议定义
 """
 
-from typing import Any, Protocol
+from abc import ABC
+from typing import TYPE_CHECKING, Any, Protocol, Union
+
+from pydantic import BaseModel
 
 from .models import ToolDefinition, ToolResult
+
+if TYPE_CHECKING:
+    from .models import LLMMessage, LLMResponse, LLMToolCall
+
+
+class ToolCallData(BaseModel):
+    """传递给 on_tool_start 的数据模型"""
+
+    tool_name: str
+    tool_args: dict[str, Any]
+
+
+class ToolCallCompleteData(BaseModel):
+    """传递给 on_tool_call_complete 的数据模型"""
+
+    id: str
+    name: str
+    arguments: str
+    result: "ToolResult"
+
+
+class BaseCallbackHandler(ABC):
+    """
+    Agent/LLM 生命周期回调处理器的基类。
+    下沉至 LLM 层以允许 ToolInvoker 直接调用。
+    """
+
+    async def on_agent_start(self, messages: list["LLMMessage"], **kwargs: Any) -> None:
+        """在 AgentExecutor 开始运行时调用。"""
+        pass
+
+    async def on_model_start(
+        self, model_name: str, messages: list["LLMMessage"], **kwargs: Any
+    ) -> None:
+        """在向LLM发起请求之前调用。"""
+        pass
+
+    async def on_model_end(
+        self, response: "LLMResponse", duration: float, **kwargs: Any
+    ) -> None:
+        """在收到LLM响应之后调用。"""
+        pass
+
+    async def on_tool_start(
+        self, tool_call: "LLMToolCall", data: ToolCallData, **kwargs: Any
+    ) -> Union[ToolCallData, "ToolResult", None]:
+        """
+        在单个工具即将被执行时调用。
+
+        返回:
+            ToolCallData: 修改参数并继续执行
+            ToolResult: 拦截执行并直接返回给模型
+            None: 正常继续
+        """
+        pass
+
+    async def on_tool_end(
+        self,
+        result: Union["ToolResult", None],
+        error: Exception | None,
+        tool_call: "LLMToolCall",
+        duration: float,
+        **kwargs: Any,
+    ) -> None:
+        """在单个工具执行完毕后调用，无论成功或失败。"""
+        pass
+
+    async def on_tool_call_complete(
+        self, data: ToolCallCompleteData, **kwargs: Any
+    ) -> None:
+        """在工具调用完成并准备创建响应消息时调用。"""
+        pass
+
+    async def on_human_input_request(self, query: str, **kwargs: Any) -> str | None:
+        """
+        当 Agent 需要人类输入时调用。
+        """
+        return None
+
+    async def on_agent_end(
+        self, final_history: list["LLMMessage"], duration: float, **kwargs: Any
+    ) -> None:
+        """在 AgentExecutor 运行结束时调用。"""
+        pass
 
 
 class ToolExecutable(Protocol):
@@ -19,10 +106,14 @@ class ToolExecutable(Protocol):
         """
         ...
 
-    async def execute(self, **kwargs: Any) -> ToolResult:
+    async def execute(self, context: Any | None = None, **kwargs: Any) -> ToolResult:
         """
         异步执行工具并返回一个结构化的结果。
         参数由LLM根据工具定义生成。
+
+        Args:
+            context: 运行时上下文 (RunContext)，可选注入
+            **kwargs: 工具参数
         """
         ...
 

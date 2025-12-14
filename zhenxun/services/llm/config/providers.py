@@ -13,6 +13,7 @@ from zhenxun.configs.config import Config
 from zhenxun.configs.utils import parse_as
 from zhenxun.services.log import logger
 from zhenxun.utils.manager.priority_manager import PriorityLifecycle
+from zhenxun.utils.pydantic_compat import model_dump
 
 from ..core import key_store
 from ..tools import tool_provider_manager
@@ -22,6 +23,39 @@ AI_CONFIG_GROUP = "AI"
 PROVIDERS_CONFIG_KEY = "PROVIDERS"
 
 
+class DebugLogOptions(BaseModel):
+    """调试日志细粒度控制"""
+
+    show_tools: bool = Field(
+        default=True, description="是否在日志中显示工具定义(JSON Schema)"
+    )
+    show_schema: bool = Field(
+        default=True, description="是否在日志中显示结构化输出Schema(response_format)"
+    )
+    show_safety: bool = Field(
+        default=True, description="是否在日志中显示安全设置(safetySettings)"
+    )
+
+    def __bool__(self) -> bool:
+        """支持 bool(debug_options) 的语法，方便兼容旧逻辑。"""
+        return self.show_tools or self.show_schema or self.show_safety
+
+
+class ClientSettings(BaseModel):
+    """LLM 客户端通用设置"""
+
+    timeout: int = Field(default=300, description="API请求超时时间（秒）")
+    max_retries: int = Field(default=3, description="请求失败时的最大重试次数")
+    retry_delay: int = Field(default=2, description="请求重试的基础延迟时间（秒）")
+    structured_retries: int = Field(
+        default=2, description="结构化生成校验失败时的最大重试次数 (IVR)"
+    )
+    proxy: str | None = Field(
+        default=None,
+        description="网络代理，例如 http://127.0.0.1:7890",
+    )
+
+
 class LLMConfig(BaseModel):
     """LLM 服务配置类"""
 
@@ -29,19 +63,15 @@ class LLMConfig(BaseModel):
         default=None,
         description="LLM服务全局默认使用的模型名称 (格式: ProviderName/ModelName)",
     )
-    proxy: str | None = Field(
-        default=None,
-        description="LLM服务请求使用的网络代理，例如 http://127.0.0.1:7890",
-    )
-    timeout: int = Field(default=180, description="LLM服务API请求超时时间（秒）")
-    max_retries_llm: int = Field(
-        default=3, description="LLM服务请求失败时的最大重试次数"
-    )
-    retry_delay_llm: int = Field(
-        default=2, description="LLM服务请求重试的基础延迟时间（秒）"
+    client_settings: ClientSettings = Field(
+        default_factory=ClientSettings, description="客户端连接与重试配置"
     )
     providers: list[ProviderConfig] = Field(
         default_factory=list, description="配置多个 AI 服务提供商及其模型信息"
+    )
+    debug_log: DebugLogOptions | bool = Field(
+        default_factory=DebugLogOptions,
+        description="LLM请求日志详情开关。支持 bool (全开/全关) 或 dict (细粒度控制)。",
     )
 
     def get_provider_by_name(self, name: str) -> ProviderConfig | None:
@@ -226,36 +256,29 @@ def register_llm_configs():
     )
     Config.add_plugin_config(
         AI_CONFIG_GROUP,
-        "proxy",
-        llm_config.proxy,
-        help="LLM服务请求使用的网络代理，例如 http://127.0.0.1:7890",
-        type=str,
+        "client_settings",
+        model_dump(llm_config.client_settings),
+        help=(
+            "LLM客户端高级设置。\n"
+            "包含: timeout(超时秒数), max_retries(重试次数), "
+            "retry_delay(重试延迟), structured_retries(结构化生成重试), proxy(代理)"
+        ),
+        type=dict,
     )
     Config.add_plugin_config(
         AI_CONFIG_GROUP,
-        "timeout",
-        llm_config.timeout,
-        help="LLM服务API请求超时时间（秒）",
-        type=int,
-    )
-    Config.add_plugin_config(
-        AI_CONFIG_GROUP,
-        "max_retries_llm",
-        llm_config.max_retries_llm,
-        help="LLM服务请求失败时的最大重试次数",
-        type=int,
-    )
-    Config.add_plugin_config(
-        AI_CONFIG_GROUP,
-        "retry_delay_llm",
-        llm_config.retry_delay_llm,
-        help="LLM服务请求重试的基础延迟时间（秒）",
-        type=int,
+        "debug_log",
+        {"show_tools": True, "show_schema": True, "show_safety": True},
+        help=(
+            "LLM日志详情开关。示例: {'show_tools': True, 'show_schema': False, "
+            "'show_safety': False}"
+        ),
+        type=dict,
     )
     Config.add_plugin_config(
         AI_CONFIG_GROUP,
         "gemini_safety_threshold",
-        "BLOCK_MEDIUM_AND_ABOVE",
+        "BLOCK_NONE",
         help=(
             "Gemini 安全过滤阈值 "
             "(BLOCK_LOW_AND_ABOVE: 阻止低级别及以上, "
@@ -270,7 +293,20 @@ def register_llm_configs():
         AI_CONFIG_GROUP,
         PROVIDERS_CONFIG_KEY,
         get_default_providers(),
-        help="配置多个 AI 服务提供商及其模型信息",
+        help=(
+            "配置多个 AI 服务提供商及其模型信息。\n"
+            "注意：可以在特定模型配置下添加 'api_type' 以覆盖提供商的全局设置。\n"
+            "支持的 api_type 包括:\n"
+            "- 'openai': 标准 OpenAI 格式 (DeepSeek, SiliconFlow, Moonshot 等)\n"
+            "- 'gemini': Google Gemini API\n"
+            "- 'zhipu': 智谱 AI (GLM)\n"
+            "- 'ark': 字节跳动火山引擎 (Doubao)\n"
+            "- 'openrouter': OpenRouter 聚合平台\n"
+            "- 'openai_image': OpenAI 兼容的图像生成接口 (DALL-E)\n"
+            "- 'openai_responses': 支持新版 responses 格式的 OpenAI 兼容接口\n"
+            "- 'smart': 智能路由模式 (主要用于第三方中转场景，自动根据模型名"
+            "分发请求到 openai 或 gemini)"
+        ),
         default_value=[],
         type=list[ProviderConfig],
     )
@@ -278,15 +314,21 @@ def register_llm_configs():
 
 @lru_cache(maxsize=1)
 def get_llm_config() -> LLMConfig:
-    """获取 LLM 配置实例，不再加载 MCP 工具配置"""
+    """获取 LLM 配置实例"""
     ai_config = get_ai_config()
+
+    raw_debug = ai_config.get("debug_log", False)
+    if isinstance(raw_debug, bool):
+        debug_log_val = DebugLogOptions(
+            show_tools=raw_debug, show_schema=raw_debug, show_safety=raw_debug
+        )
+    else:
+        debug_log_val = raw_debug
 
     config_data = {
         "default_model_name": ai_config.get("default_model_name"),
-        "proxy": ai_config.get("proxy"),
-        "timeout": ai_config.get("timeout", 180),
-        "max_retries_llm": ai_config.get("max_retries_llm", 3),
-        "retry_delay_llm": ai_config.get("retry_delay_llm", 2),
+        "client_settings": ai_config.get("client_settings", {}),
+        "debug_log": debug_log_val,
         PROVIDERS_CONFIG_KEY: ai_config.get(PROVIDERS_CONFIG_KEY, []),
     }
 
@@ -314,14 +356,14 @@ def validate_llm_config() -> tuple[bool, list[str]]:
     try:
         llm_config = get_llm_config()
 
-        if llm_config.timeout <= 0:
+        if llm_config.client_settings.timeout <= 0:
             errors.append("timeout 必须大于 0")
 
-        if llm_config.max_retries_llm < 0:
-            errors.append("max_retries_llm 不能小于 0")
+        if llm_config.client_settings.max_retries < 0:
+            errors.append("max_retries 不能小于 0")
 
-        if llm_config.retry_delay_llm <= 0:
-            errors.append("retry_delay_llm 必须大于 0")
+        if llm_config.client_settings.retry_delay <= 0:
+            errors.append("retry_delay 必须大于 0")
 
         if not llm_config.providers:
             errors.append("至少需要配置一个 AI 服务提供商")

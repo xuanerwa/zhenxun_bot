@@ -5,30 +5,32 @@ LLM 类型定义模块
 """
 
 from .capabilities import ModelCapabilities, ModelModality, get_model_capabilities
-from .content import (
-    LLMContentPart,
-    LLMMessage,
-    LLMResponse,
-)
-from .enums import (
-    EmbeddingTaskType,
-    ModelProvider,
-    ResponseFormat,
-    TaskType,
-    ToolCategory,
-)
 from .exceptions import LLMErrorCode, LLMException, get_user_friendly_error_message
 from .models import (
+    CodeExecutionOutcome,
+    EmbeddingTaskType,
+    GeminiCodeExecution,
+    GeminiGoogleSearch,
+    GeminiUrlContext,
     LLMCacheInfo,
     LLMCodeExecution,
+    LLMContentPart,
     LLMGroundingAttribution,
     LLMGroundingMetadata,
+    LLMMessage,
+    LLMResponse,
     LLMToolCall,
     LLMToolFunction,
     ModelDetail,
     ModelInfo,
     ModelName,
+    ModelProvider,
     ProviderConfig,
+    ResponseFormat,
+    StructuredOutputStrategy,
+    TaskType,
+    ToolCategory,
+    ToolChoice,
     ToolMetadata,
     ToolResult,
     UsageInfo,
@@ -36,7 +38,11 @@ from .models import (
 from .protocols import ToolExecutable, ToolProvider
 
 __all__ = [
+    "CodeExecutionOutcome",
     "EmbeddingTaskType",
+    "GeminiCodeExecution",
+    "GeminiGoogleSearch",
+    "GeminiUrlContext",
     "LLMCacheInfo",
     "LLMCodeExecution",
     "LLMContentPart",
@@ -56,8 +62,10 @@ __all__ = [
     "ModelProvider",
     "ProviderConfig",
     "ResponseFormat",
+    "StructuredOutputStrategy",
     "TaskType",
     "ToolCategory",
+    "ToolChoice",
     "ToolExecutable",
     "ToolMetadata",
     "ToolProvider",

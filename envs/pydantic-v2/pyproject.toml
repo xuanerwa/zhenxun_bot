@@ -36,7 +36,6 @@ feedparser = "^6.0.11"
 imagehash = "^4.3.1"
 cn2an = "^0.5.22"
 dateparser = "^1.2.0"
-bilireq = ">=0.2.10"
 python-jose = { extras = ["cryptography"], version = "^3.3.0" }
 python-multipart = "^0.0.9"
 aiocache = {extras = ["redis"], version = "^0.12.3"}
@@ -47,10 +46,10 @@ nonebot-plugin-uninfo = ">=0.7.3"
 nonebot-plugin-waiter = "^0.8.1"
 multidict = ">=6.0.0,!=6.3.2"
 pydantic = ">=2.0.0, <3.0.0"
-
 redis = { version = ">=5", optional = true }
 asyncpg = { version = ">=0.20.0", optional = true }
 alibabacloud-devops20210625 = "^5.0.2"
+json_repair = "^0.54.0"
 
 [tool.poetry.group.dev.dependencies]
 nonebug = "^0.4"
